@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Notificaciones – deúres{% endblock %}
+{% block body %}
+<style>
+  body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1.5rem; }
+  .card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 2rem; max-width: 380px; width: 100%; text-align: center;
+    box-shadow: var(--shadow);
+  }
+  .icon { font-size: 3rem; margin-bottom: 1rem; }
+  h2 { font-size: 1.3rem; margin-bottom: .5rem; }
+  p { color: var(--text2); font-size: .9rem; margin-bottom: 1.5rem; line-height: 1.5; }
+  #status { font-size: .85rem; margin-top: 1rem; padding: .6rem 1rem; border-radius: 8px; display:none; }
+  #status.ok  { background: rgba(74,222,128,.1); color: var(--green); display:block; }
+  #status.err { background: rgba(248,113,113,.1); color: var(--red); display:block; }
+  #status.info { background: rgba(108,99,255,.1); color: var(--accent2); display:block; }
+</style>
+
+<div class="card">
+  <div class="icon">🔔</div>
+  <h2>Activar notificaciones</h2>
+  <p>Recibe un aviso cuando alguien te escriba un mensaje directo o haya actividad en las salas.</p>
+  <button class="btn btn-primary" id="btn" style="width:100%;font-size:1rem;padding:.8rem" onclick="activar()">
+    Activar notificaciones
+  </button>
+  <div id="status"></div>
+  <br>
+  <a href="/" class="btn btn-ghost btn-sm">← Volver al chat</a>
+</div>
+
+<script>
+const VAPID_PUBLIC_KEY = '{{ vapid_public_key }}';
+
+function urlBase64ToUint8Array(b) {
+  const pad = '='.repeat((4 - b.length % 4) % 4);
+  const base64 = (b + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = type;
+}
+
+async function activar() {
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  btn.textContent = 'Activando…';
+
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    setStatus('Tu navegador no soporta notificaciones push.', 'err');
+    btn.disabled = false; btn.textContent = 'Activar notificaciones';
+    return;
+  }
+
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      setStatus('Permiso denegado. Ve a ajustes del navegador y activa las notificaciones para esta web.', 'err');
+      btn.disabled = false; btn.textContent = 'Activar notificaciones';
+      return;
+    }
+
+    setStatus('Permiso concedido, registrando…', 'info');
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+
+    const res = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub)
+    });
+
+    if (res.ok) {
+      localStorage.setItem('notif_accepted', '1');
+      setStatus('✅ Notificaciones activadas correctamente.', 'ok');
+      btn.textContent = 'Ya activadas';
+    } else {
+      setStatus('Error al guardar la suscripción.', 'err');
+      btn.disabled = false; btn.textContent = 'Reintentar';
+    }
+  } catch(e) {
+    setStatus('Error: ' + e.message, 'err');
+    btn.disabled = false; btn.textContent = 'Reintentar';
+  }
+}
+
+// Mostrar estado actual
+window.addEventListener('load', () => {
+  if (!('Notification' in window)) return;
+  const perm = Notification.permission;
+  if (perm === 'granted') setStatus('Ya tienes el permiso concedido. Pulsa el botón para re-suscribir.', 'info');
+  if (perm === 'denied') setStatus('Permiso bloqueado. Debes habilitarlo manualmente en ajustes del navegador.', 'err');
+});
+</script>
+{% endblock %}

@@ -309,6 +309,11 @@ def push_subscribe():
     db.commit(); db.close()
     return jsonify({"ok": True})
 
+@app.route("/notificaciones")
+@login_required
+def notif_page():
+    return render_template("notificaciones.html")
+
 @app.route("/api/push/test")
 @login_required
 def push_test():
