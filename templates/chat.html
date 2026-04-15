@@ -250,7 +250,7 @@ html, body { overflow: hidden; }
 {% block body %}
 <div id="app">
 
-  <\!-- Topbar -->
+  <!-- Topbar -->
   <div class="topbar">
     <button class="menu-btn" onclick="toggleSb()">☰</button>
     <span id="r-emoji" style="font-size:1.25rem">💬</span>
@@ -272,7 +272,7 @@ html, body { overflow: hidden; }
   <div class="chat-body">
     <div class="sb-overlay" id="sb-ov" onclick="toggleSb()"></div>
 
-    <\!-- Sidebar -->
+    <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
       <h3>Salas</h3>
       {% for r in rooms %}
@@ -291,11 +291,11 @@ html, body { overflow: hidden; }
       <div id="friends-list"></div>
     </nav>
 
-    <\!-- Zona mensajes -->
+    <!-- Zona mensajes -->
     <div class="msgs-wrap" id="msgs"></div>
   </div>
 
-  <\!-- Input -->
+  <!-- Input -->
   <div class="input-area">
     <div class="file-preview" id="fp">
       <span>📎</span><span id="fp-name">archivo</span>
@@ -307,17 +307,17 @@ html, body { overflow: hidden; }
       <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt"
              onchange="fileSelected(event)">
       <textarea id="msg-input" placeholder="Escribe un mensaje…" rows="1"
-        onkeydown="if(event.key==='Enter'&&\!event.shiftKey){event.preventDefault();sendMsg();}"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"
         oninput="autoH(this)"></textarea>
       <button class="ic-btn send" onclick="sendMsg()" title="Enviar">➤</button>
     </div>
   </div>
 </div>
 
-<\!-- Lightbox -->
+<!-- Lightbox -->
 <div id="lb" onclick="closeLb()"><img id="lb-img" src="" alt=""></div>
 
-<\!-- Modal: Buscar amigo -->
+<!-- Modal: Buscar amigo -->
 <div class="modal-overlay" id="search-modal">
   <div class="modal-box">
     <h3>🔍 Añadir amigo</h3>
@@ -329,7 +329,7 @@ html, body { overflow: hidden; }
   </div>
 </div>
 
-<\!-- Modal: Solicitudes pendientes -->
+<!-- Modal: Solicitudes pendientes -->
 <div class="modal-overlay" id="pending-modal">
   <div class="modal-box">
     <h3>👥 Solicitudes de amistad</h3>
@@ -385,11 +385,11 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('user_joined', data => {
-    if (data.room === curRoom || \!data.room)
+    if (data.room === curRoom || !data.room)
       document.getElementById('online-n').textContent = data.count || '';
   });
   socket.on('user_left', data => {
-    if (data.room === curRoom || \!data.room)
+    if (data.room === curRoom || !data.room)
       document.getElementById('online-n').textContent = data.count || '';
   });
 
@@ -398,7 +398,7 @@ window.addEventListener('DOMContentLoaded', () => {
   socket.on('room_renamed', r => {
     const btn = document.getElementById('rb-' + r.id);
     if (btn) btn.innerHTML = `<span class="remi">${r.emoji}</span>${r.name}`;
-    if (r.id === curRoom && \!isDM) setHeader(r.name, r.emoji);
+    if (r.id === curRoom && !isDM) setHeader(r.name, r.emoji);
   });
   socket.on('room_deleted', r => {
     const btn = document.getElementById('rb-' + r.id);
@@ -506,7 +506,7 @@ function dmRoomId(a, b) {
 
 // ── Cambio sala / DM ──────────────────────────────────────────────────────────
 function switchRoom(id, name, emoji) {
-  if (\!isDM && id === curRoom) { closeSb(); return; }
+  if (!isDM && id === curRoom) { closeSb(); return; }
   if (isDM) {
     isDM = false; dmTarget = null;
     document.getElementById('online-badge').style.display = '';
@@ -582,9 +582,9 @@ function appendMsg(msg) {
     const isMe = (msg.user_id === USER_ID);
     div.className = 'msg ' + (isMe ? 'me' : 'other');
     let inner = '';
-    if (\!isMe) inner += `<div class="nick">${esc(msg.nickname)}</div>`;
+    if (!isMe) inner += `<div class="nick">${esc(msg.nickname)}</div>`;
     inner += '<div class="bubble-row">';
-    if ((IS_ADMIN || isMe) && msg.kind \!== 'system') {
+    if ((IS_ADMIN || isMe) && msg.kind !== 'system') {
       inner += `<button class="del-btn" title="Eliminar" onclick="deleteMsg('${msg.id}')">🗑</button>`;
     }
     inner += '<div class="bubble">';
@@ -604,7 +604,7 @@ function appendMsg(msg) {
 }
 
 function deleteMsg(id) {
-  if (\!confirm('¿Eliminar este mensaje?')) return;
+  if (!confirm('¿Eliminar este mensaje?')) return;
   socket.emit('delete_message', { room: curRoom, message_id: id });
 }
 
@@ -623,7 +623,7 @@ function esc(s) {
 function sendMsg() {
   const inp  = document.getElementById('msg-input');
   const text = inp.value.trim();
-  if (\!text && \!pendingFile) return;
+  if (!text && !pendingFile) return;
 
   if (pendingFile) {
     uploadThenSend(text);
@@ -639,7 +639,7 @@ function sendMsg() {
 
 // ── Archivos ──────────────────────────────────────────────────────────────────
 function fileSelected(e) {
-  const f = e.target.files[0]; if (\!f) return;
+  const f = e.target.files[0]; if (!f) return;
   pendingFile = f;
   document.getElementById('fp-name').textContent = f.name;
   document.getElementById('fp').classList.add('show');
@@ -709,7 +709,7 @@ function searchFriends() {
         }
         container.innerHTML = '';
         results.forEach(u => {
-          const alreadyFriend = \!\!friendsData[u.id];
+          const alreadyFriend = !!friendsData[u.id];
           const div = document.createElement('div');
           div.className = 'search-result';
           div.innerHTML = `<span class="sr-nick">${esc(u.nickname)}</span>
@@ -769,7 +769,7 @@ function acceptReq(uid) {
     .then(r => r.json())
     .then(d => {
       if (d.ok) {
-        pendingReqs = pendingReqs.filter(r => r.from_id \!== uid);
+        pendingReqs = pendingReqs.filter(r => r.from_id !== uid);
         updatePendingBadge();
         document.getElementById('pr-' + uid)?.remove();
         loadFriends();
@@ -782,7 +782,7 @@ function declineReq(uid) {
     .then(r => r.json())
     .then(d => {
       if (d.ok) {
-        pendingReqs = pendingReqs.filter(r => r.from_id \!== uid);
+        pendingReqs = pendingReqs.filter(r => r.from_id !== uid);
         updatePendingBadge();
         document.getElementById('pr-' + uid)?.remove();
       }
