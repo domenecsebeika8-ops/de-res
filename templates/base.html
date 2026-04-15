@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="deúres">
+<meta name="theme-color" content="#6c63ff">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
 <title>{% block title %}deúres{% endblock %}</title>
 <style>
 :root {
@@ -57,5 +62,11 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
 </style>
 {% block extra_styles %}{% endblock %}
 </head>
-<body>{% block body %}{% endblock %}</body>
+<body>{% block body %}{% endblock %}
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js');
+}
+</script>
+</body>
 </html>
