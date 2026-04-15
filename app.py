@@ -300,6 +300,35 @@ def push_subscribe():
     db.commit(); db.close()
     return jsonify({"ok": True})
 
+@app.route("/api/push/test")
+@login_required
+def push_test():
+    try:
+        from pywebpush import webpush, WebPushException
+        import json as _json
+        db = get_db()
+        subs = dbq(db, "SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?",
+                   (current_user.id,)).fetchall()
+        db.close()
+        if not subs:
+            return jsonify({"error": "No hay suscripciones guardadas"})
+        results = []
+        for s in subs:
+            try:
+                webpush(
+                    subscription_info={"endpoint": s["endpoint"],
+                                       "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}},
+                    data=_json.dumps({"title": "Prueba deúres", "body": "Notificaciones funcionando\!", "url": "/"}),
+                    vapid_private_key=VAPID_PRIVATE,
+                    vapid_claims=VAPID_CLAIMS
+                )
+                results.append({"ok": True, "endpoint": s["endpoint"][:60]})
+            except Exception as e:
+                results.append({"ok": False, "error": str(e), "endpoint": s["endpoint"][:60]})
+        return jsonify({"results": results})
+    except Exception as e:
+        return jsonify({"fatal": str(e)})
+
 @app.route("/api/push/debug")
 @login_required
 def push_debug():
