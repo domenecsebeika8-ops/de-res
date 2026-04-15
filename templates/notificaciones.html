@@ -66,7 +66,23 @@ async function activar() {
 
     setStatus('Permiso concedido, registrando…', 'info');
 
-    const reg = await navigator.serviceWorker.ready;
+    // Registrar SW si no está
+    let swRegistration = await navigator.serviceWorker.getRegistration('/');
+    if (!swRegistration) {
+      swRegistration = await navigator.serviceWorker.register('/static/sw.js');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // Esperar SW activo con timeout de 8s
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Service worker tardó demasiado. Recarga la página e inténtalo de nuevo.')), 8000))
+    ]);
+
+    // Cancelar suscripción anterior si existe
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) await existing.unsubscribe();
+
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
