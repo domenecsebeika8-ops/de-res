@@ -144,14 +144,16 @@ def get_friends(user_id):
 
 def send_push(user_id, title, body, url="/"):
     if not VAPID_PUBLIC or not VAPID_PRIVATE:
+        print("[PUSH] VAPID keys not configured", flush=True)
         return
     try:
-        from pywebpush import webpush
+        from pywebpush import webpush, WebPushException
         import json as _json
         db   = get_db()
         subs = dbq(db, "SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?",
                    (user_id,)).fetchall()
         db.close()
+        print(f"[PUSH] Sending to user {user_id}, {len(subs)} subscription(s)", flush=True)
         for s in subs:
             try:
                 webpush(
@@ -161,10 +163,11 @@ def send_push(user_id, title, body, url="/"):
                     vapid_private_key=VAPID_PRIVATE,
                     vapid_claims=VAPID_CLAIMS
                 )
-            except Exception:
-                pass
-    except Exception:
-        pass
+                print(f"[PUSH] Sent OK to {s['endpoint'][:60]}", flush=True)
+            except Exception as e:
+                print(f"[PUSH] Error sending: {e}", flush=True)
+    except Exception as e:
+        print(f"[PUSH] Fatal error: {e}", flush=True)
 
 class User(UserMixin):
     def __init__(self, row):
@@ -296,6 +299,19 @@ def push_subscribe():
             (p256dh, auth, ep))
     db.commit(); db.close()
     return jsonify({"ok": True})
+
+@app.route("/api/push/debug")
+@login_required
+def push_debug():
+    db = get_db()
+    subs = dbq(db, "SELECT id, endpoint, created_at FROM push_subs WHERE user_id=?",
+               (current_user.id,)).fetchall()
+    db.close()
+    return jsonify({
+        "user_id": current_user.id,
+        "vapid_configured": bool(VAPID_PUBLIC and VAPID_PRIVATE),
+        "subscriptions": [{"id": s["id"], "endpoint": s["endpoint"][:60]+"..."} for s in subs]
+    })
 
 @app.route("/upload", methods=["POST"])
 @login_required
