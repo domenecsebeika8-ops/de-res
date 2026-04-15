@@ -1,0 +1,818 @@
+{% extends "base.html" %}
+{% block title %}deúres{% endblock %}
+{% block extra_styles %}
+<style>
+html, body { overflow: hidden; }
+
+/* ── Layout ── */
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+.topbar {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .65rem 1rem; background: var(--bg2);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; z-index: 10;
+}
+.menu-btn {
+  display: none; background: none; border: none; color: var(--text2);
+  font-size: 1.4rem; cursor: pointer; padding: .2rem .3rem;
+}
+.room-title { font-weight: 700; font-size: 1.05rem; flex: 1; min-width: 0;
+              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.online-badge { display: flex; align-items: center; gap: .3rem;
+                font-size: .8rem; color: var(--green); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.dot.offline { background: var(--text2); }
+.topbar-user { font-size: .8rem; color: var(--text2); white-space: nowrap; }
+.topbar-actions { display: flex; gap: .4rem; align-items: center; }
+.topbar-btn {
+  background: none; border: 1px solid var(--border); color: var(--text2);
+  border-radius: 8px; padding: .3rem .7rem; font-size: .78rem; cursor: pointer;
+  transition: background .15s, color .15s; position: relative;
+}
+.topbar-btn:hover { background: var(--bg3); color: var(--text); }
+.topbar-btn.admin { border-color: rgba(108,99,255,.4); color: var(--accent2); }
+.notif-dot {
+  position: absolute; top: -4px; right: -4px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--red);
+  display: none;
+}
+.notif-dot.show { display: block; }
+
+/* ── Body ── */
+.chat-body { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 210px; background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; padding: .6rem .4rem;
+}
+.sidebar h3 {
+  font-size: .68rem; color: var(--text2); text-transform: uppercase;
+  letter-spacing: .08em; padding: .4rem .6rem .5rem;
+}
+.sb-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .5rem .6rem .4rem;
+}
+.sb-section-header span {
+  font-size: .68rem; color: var(--text2); text-transform: uppercase; letter-spacing: .08em;
+}
+.sb-add-btn {
+  background: none; border: none; cursor: pointer; color: var(--accent2);
+  font-size: .85rem; padding: .1rem .3rem; border-radius: 5px;
+  transition: background .12s;
+}
+.sb-add-btn:hover { background: var(--bg3); }
+
+.room-btn {
+  display: flex; align-items: center; gap: .55rem;
+  width: 100%; padding: .55rem .7rem; border-radius: 9px;
+  border: none; background: none; color: var(--text2); cursor: pointer;
+  text-align: left; font-size: .9rem; transition: background .12s, color .12s;
+}
+.room-btn:hover  { background: var(--bg3); color: var(--text); }
+.room-btn.active { background: rgba(108,99,255,.16); color: var(--accent2); font-weight: 600; }
+.room-btn .remi  { font-size: 1.05rem; width: 22px; text-align: center; flex-shrink: 0; }
+
+.friend-btn {
+  display: flex; align-items: center; gap: .55rem;
+  width: 100%; padding: .45rem .7rem; border-radius: 9px;
+  border: none; background: none; color: var(--text2); cursor: pointer;
+  text-align: left; font-size: .88rem; transition: background .12s, color .12s;
+}
+.friend-btn:hover  { background: var(--bg3); color: var(--text); }
+.friend-btn.active { background: rgba(108,99,255,.16); color: var(--accent2); font-weight: 600; }
+.friend-btn .f-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); flex-shrink: 0; }
+.friend-btn .f-dot.on { background: var(--green); }
+.friend-btn .f-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sb-divider { border: none; border-top: 1px solid var(--border); margin: .5rem .4rem; }
+
+.sb-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.6); z-index: 50;
+}
+.sb-overlay.open { display: block; }
+
+/* ── Mensajes ── */
+.msgs-wrap {
+  flex: 1; overflow-y: auto; padding: 1rem .7rem 1.4rem;
+  display: flex; flex-direction: column; gap: .35rem; scroll-behavior: smooth;
+}
+.msgs-wrap::-webkit-scrollbar { width: 5px; }
+.msgs-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.msg { display: flex; flex-direction: column; max-width: 70%; animation: pop .15s ease; }
+@keyframes pop { from { opacity: 0; transform: translateY(5px); } }
+.msg.me     { align-self: flex-end; }
+.msg.other  { align-self: flex-start; }
+.msg.system { align-self: center; max-width: 88%; }
+
+.nick { font-size: .7rem; color: var(--text2); margin-bottom: .18rem; padding: 0 .35rem; }
+.msg.me .nick { text-align: right; }
+
+.bubble-row { display: flex; align-items: flex-end; gap: .4rem; }
+.msg.me    .bubble-row { flex-direction: row-reverse; }
+
+.bubble {
+  padding: .55rem .85rem; border-radius: 15px;
+  font-size: .92rem; line-height: 1.45; word-break: break-word;
+}
+.msg.me    .bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+.msg.other .bubble { background: var(--bg3); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+.msg.system .bubble {
+  background: transparent; border: 1px dashed var(--border);
+  color: var(--text2); font-size: .76rem; padding: .25rem .8rem; text-align: center;
+}
+
+.del-btn {
+  display: none; background: none; border: none; cursor: pointer;
+  color: var(--red); font-size: .9rem; opacity: .6; padding: .2rem;
+  border-radius: 5px; transition: opacity .15s;
+}
+.del-btn:hover { opacity: 1; }
+.msg:hover .del-btn { display: inline-flex; }
+
+.time { font-size: .63rem; color: var(--text2); margin-top: .12rem; padding: 0 .35rem; }
+.msg.me .time { text-align: right; }
+
+.msg-img {
+  max-width: 230px; max-height: 230px; border-radius: 9px;
+  display: block; margin-top: .25rem; cursor: zoom-in;
+}
+.file-link {
+  color: var(--accent2); font-size: .83rem; display: flex;
+  align-items: center; gap: .35rem; margin-top: .25rem;
+}
+.file-link:hover { text-decoration: underline; }
+
+/* ── Input ── */
+.input-area {
+  background: var(--bg2); border-top: 1px solid var(--border);
+  padding: .55rem .7rem; flex-shrink: 0;
+}
+.file-preview {
+  display: none; align-items: center; gap: .5rem;
+  background: var(--bg3); border-radius: 9px; padding: .35rem .75rem;
+  margin-bottom: .4rem; font-size: .8rem; color: var(--text2);
+}
+.file-preview.show { display: flex; }
+.file-preview .fp-close {
+  background: none; border: none; color: var(--text2);
+  cursor: pointer; font-size: .95rem; margin-left: auto;
+}
+.up-prog { display: none; height: 3px; background: var(--bg3); border-radius: 2px; margin-bottom: .4rem; }
+.up-prog.show { display: block; }
+.up-bar  { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
+
+.input-row { display: flex; align-items: center; gap: .45rem; }
+.ic-btn {
+  background: none; border: none; cursor: pointer;
+  width: 38px; height: 38px; border-radius: 9px; display: flex;
+  align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0;
+}
+.ic-btn.attach { color: var(--text2); border: 1px solid var(--border); }
+.ic-btn.attach:hover { background: var(--bg3); }
+.ic-btn.send   { background: var(--accent); color: #fff; }
+.ic-btn.send:hover { opacity: .88; }
+#msg-input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 11px; padding: .55rem .85rem; color: var(--text); font-size: .93rem;
+  outline: none; resize: none; line-height: 1.4; min-height: 38px; max-height: 110px;
+}
+#msg-input:focus { border-color: var(--accent); }
+#file-input { display: none; }
+
+/* ── Modales ── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.75); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1.5rem; width: min(380px,94vw);
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: .8rem;
+}
+.modal-box h3 { font-size: 1rem; margin: 0; }
+.modal-footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .4rem; }
+
+/* Resultats de cerca */
+.search-results { display: flex; flex-direction: column; gap: .35rem; max-height: 220px; overflow-y: auto; }
+.search-result {
+  display: flex; align-items: center; gap: .7rem; padding: .55rem .7rem;
+  background: var(--bg3); border-radius: 9px; cursor: pointer;
+  border: 1px solid transparent; transition: border .15s;
+}
+.search-result:hover { border-color: var(--accent); }
+.search-result .sr-nick { flex: 1; font-size: .9rem; }
+.search-result .sr-action { font-size: .78rem; }
+
+/* Solicitudes pendientes */
+.pending-list { display: flex; flex-direction: column; gap: .45rem; max-height: 260px; overflow-y: auto; }
+.pending-item {
+  display: flex; align-items: center; gap: .6rem; padding: .55rem .7rem;
+  background: var(--bg3); border-radius: 9px;
+}
+.pending-item .pi-nick { flex: 1; font-size: .9rem; }
+.pending-btns { display: flex; gap: .35rem; }
+
+/* DM header info */
+.dm-info {
+  display: flex; align-items: center; gap: .45rem;
+  font-size: .8rem; color: var(--text2);
+}
+.dm-info .dm-online { color: var(--green); }
+
+/* Lightbox */
+#lb {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.9); z-index: 300;
+  align-items: center; justify-content: center; cursor: zoom-out;
+}
+#lb.open { display: flex; }
+#lb img  { max-width: 94vw; max-height: 92vh; border-radius: 10px; }
+
+/* ── Mòbil ── */
+@media (max-width: 640px) {
+  .sidebar {
+    position: fixed; left: -100%; top: 0; height: 100%; z-index: 60;
+    width: 82vw; transition: left .24s ease;
+  }
+  .sidebar.open { left: 0; }
+  .menu-btn    { display: block; }
+  .topbar-user { display: none; }
+  .msg { max-width: 84%; }
+}
+</style>
+{% endblock %}
+{% block body %}
+<div id="app">
+
+  <\!-- Topbar -->
+  <div class="topbar">
+    <button class="menu-btn" onclick="toggleSb()">☰</button>
+    <span id="r-emoji" style="font-size:1.25rem">💬</span>
+    <span class="room-title" id="r-name">General</span>
+    <div class="online-badge" id="online-badge"><div class="dot"></div><span id="online-n">0</span></div>
+    <div class="topbar-actions">
+      <button class="topbar-btn" id="req-btn" onclick="openPendingModal()" title="Solicitudes de amistad">
+        👥 <span id="req-count">0</span>
+        <span class="notif-dot" id="req-dot"></span>
+      </button>
+      {% if user.is_admin %}
+      <button class="topbar-btn admin" onclick="location.href='/admin'">⚙ Admin</button>
+      {% endif %}
+      <span class="topbar-user">👤 {{ user.nickname }}</span>
+      <button class="topbar-btn" onclick="location.href='/logout'">Salir</button>
+    </div>
+  </div>
+
+  <div class="chat-body">
+    <div class="sb-overlay" id="sb-ov" onclick="toggleSb()"></div>
+
+    <\!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+      <h3>Salas</h3>
+      {% for r in rooms %}
+      <button class="room-btn" id="rb-{{ r.id }}"
+              onclick="switchRoom('{{ r.id }}','{{ r.name }}','{{ r.emoji }}')">
+        <span class="remi">{{ r.emoji }}</span>{{ r.name }}
+      </button>
+      {% endfor %}
+
+      <hr class="sb-divider">
+
+      <div class="sb-section-header">
+        <span>Amigos</span>
+        <button class="sb-add-btn" onclick="openSearchModal()" title="Añadir amigo">＋</button>
+      </div>
+      <div id="friends-list"></div>
+    </nav>
+
+    <\!-- Zona mensajes -->
+    <div class="msgs-wrap" id="msgs"></div>
+  </div>
+
+  <\!-- Input -->
+  <div class="input-area">
+    <div class="file-preview" id="fp">
+      <span>📎</span><span id="fp-name">archivo</span>
+      <button class="fp-close" onclick="clearFile()">✕</button>
+    </div>
+    <div class="up-prog" id="up-prog"><div class="up-bar" id="up-bar"></div></div>
+    <div class="input-row">
+      <button class="ic-btn attach" onclick="document.getElementById('file-input').click()" title="Adjuntar">📎</button>
+      <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt"
+             onchange="fileSelected(event)">
+      <textarea id="msg-input" placeholder="Escribe un mensaje…" rows="1"
+        onkeydown="if(event.key==='Enter'&&\!event.shiftKey){event.preventDefault();sendMsg();}"
+        oninput="autoH(this)"></textarea>
+      <button class="ic-btn send" onclick="sendMsg()" title="Enviar">➤</button>
+    </div>
+  </div>
+</div>
+
+<\!-- Lightbox -->
+<div id="lb" onclick="closeLb()"><img id="lb-img" src="" alt=""></div>
+
+<\!-- Modal: Buscar amigo -->
+<div class="modal-overlay" id="search-modal">
+  <div class="modal-box">
+    <h3>🔍 Añadir amigo</h3>
+    <input type="text" id="search-input" placeholder="Buscar por nombre…" oninput="searchFriends()">
+    <div class="search-results" id="search-results"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSearchModal()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<\!-- Modal: Solicitudes pendientes -->
+<div class="modal-overlay" id="pending-modal">
+  <div class="modal-box">
+    <h3>👥 Solicitudes de amistad</h3>
+    <div class="pending-list" id="pending-list"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closePendingModal()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+const NICK     = {{ user.nickname | tojson }};
+const IS_ADMIN = {{ user.is_admin | tojson }};
+const USER_ID  = {{ user.id }};
+
+let socket;
+let curRoom   = 'general';
+let curName   = 'General';
+let curEmoji  = '💬';
+let isDM      = false;
+let dmTarget  = null; // {id, nickname, online}
+let pendingFile = null;
+let friendsData = {}; // id -> {id, nickname, online}
+let pendingReqs = []; // [{from_id, from_nick}]
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  socket = io({ transports: ['websocket','polling'] });
+
+  socket.on('connect', () => {
+    socket.emit('join', { room: curRoom });
+    highlight(curRoom);
+    loadFriends();
+    loadPending();
+  });
+
+  socket.on('history', data => {
+    document.getElementById('msgs').innerHTML = '';
+    (data.messages || []).forEach(m => appendMsg(m));
+    scrollBot();
+  });
+
+  socket.on('new_message', data => {
+    if (data.room === curRoom) { appendMsg(data.message); scrollBot(); }
+  });
+
+  socket.on('message_deleted', data => {
+    if (data.room === curRoom) {
+      const el = document.getElementById('m-' + data.message_id);
+      if (el) el.remove();
+    }
+  });
+
+  socket.on('user_joined', data => {
+    if (data.room === curRoom || \!data.room)
+      document.getElementById('online-n').textContent = data.count || '';
+  });
+  socket.on('user_left', data => {
+    if (data.room === curRoom || \!data.room)
+      document.getElementById('online-n').textContent = data.count || '';
+  });
+
+  // Admin room events
+  socket.on('room_created', r => addRoomBtn(r));
+  socket.on('room_renamed', r => {
+    const btn = document.getElementById('rb-' + r.id);
+    if (btn) btn.innerHTML = `<span class="remi">${r.emoji}</span>${r.name}`;
+    if (r.id === curRoom && \!isDM) setHeader(r.name, r.emoji);
+  });
+  socket.on('room_deleted', r => {
+    const btn = document.getElementById('rb-' + r.id);
+    if (btn) btn.remove();
+    if (r.id === curRoom) switchRoom('general','General','💬');
+  });
+
+  // Friends
+  socket.on('friend_request', data => {
+    pendingReqs.push({ from_id: data.from_id, from_nick: data.from_nick });
+    updatePendingBadge();
+  });
+
+  socket.on('friend_accepted', data => {
+    friendsData[data.from_id] = { id: data.from_id, nickname: data.from_nick, online: true };
+    renderFriendsList();
+  });
+
+  socket.on('friend_online', data => {
+    if (friendsData[data.id]) {
+      friendsData[data.id].online = true;
+      renderFriendsList();
+      if (isDM && dmTarget && dmTarget.id === data.id) {
+        dmTarget.online = true;
+        setDMHeader();
+      }
+    }
+  });
+
+  socket.on('friend_offline', data => {
+    if (friendsData[data.id]) {
+      friendsData[data.id].online = false;
+      renderFriendsList();
+      if (isDM && dmTarget && dmTarget.id === data.id) {
+        dmTarget.online = false;
+        setDMHeader();
+      }
+    }
+  });
+
+  socket.on('dm_message', data => {
+    if (isDM && dmTarget && (
+        data.room === dmRoomId(USER_ID, dmTarget.id)
+    )) {
+      appendMsg(data.message);
+      scrollBot();
+    }
+  });
+
+  socket.on('dm_history', data => {
+    document.getElementById('msgs').innerHTML = '';
+    (data.messages || []).forEach(m => appendMsg(m));
+    scrollBot();
+  });
+});
+
+// ── Amigos: carga ─────────────────────────────────────────────────────────────
+function loadFriends() {
+  fetch('/api/friends/list')
+    .then(r => r.json())
+    .then(list => {
+      friendsData = {};
+      list.forEach(f => { friendsData[f.id] = f; });
+      renderFriendsList();
+    });
+}
+
+function loadPending() {
+  fetch('/api/friends/pending')
+    .then(r => r.json())
+    .then(list => {
+      pendingReqs = list;
+      updatePendingBadge();
+    });
+}
+
+function renderFriendsList() {
+  const container = document.getElementById('friends-list');
+  container.innerHTML = '';
+  const friends = Object.values(friendsData);
+  friends.sort((a,b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+  if (friends.length === 0) {
+    container.innerHTML = '<div style="padding:.4rem .7rem;font-size:.78rem;color:var(--text2)">Sin amigos aún</div>';
+    return;
+  }
+  friends.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = 'friend-btn' + (isDM && dmTarget && dmTarget.id === f.id ? ' active' : '');
+    btn.id = 'fb-' + f.id;
+    btn.innerHTML = `<span class="f-dot${f.online ? ' on' : ''}"></span><span class="f-name">${esc(f.nickname)}</span>`;
+    btn.onclick = () => openDM(f);
+    container.appendChild(btn);
+  });
+}
+
+function updatePendingBadge() {
+  const n = pendingReqs.length;
+  document.getElementById('req-count').textContent = n;
+  document.getElementById('req-dot').classList.toggle('show', n > 0);
+}
+
+function dmRoomId(a, b) {
+  return 'dm_' + Math.min(a,b) + '_' + Math.max(a,b);
+}
+
+// ── Cambio sala / DM ──────────────────────────────────────────────────────────
+function switchRoom(id, name, emoji) {
+  if (\!isDM && id === curRoom) { closeSb(); return; }
+  if (isDM) {
+    isDM = false; dmTarget = null;
+    document.getElementById('online-badge').style.display = '';
+  }
+  socket.emit('leave', { room: curRoom });
+  curRoom = id; curName = name; curEmoji = emoji;
+  setHeader(name, emoji);
+  highlight(id);
+  document.getElementById('msgs').innerHTML = '';
+  socket.emit('join', { room: id });
+  closeSb();
+}
+
+function openDM(friend) {
+  isDM = true; dmTarget = friend;
+  socket.emit('leave', { room: curRoom });
+  curRoom = dmRoomId(USER_ID, friend.id);
+  setDMHeader();
+  highlight(null);
+  document.querySelectorAll('.friend-btn').forEach(b => b.classList.remove('active'));
+  const fb = document.getElementById('fb-' + friend.id);
+  if (fb) fb.classList.add('active');
+  document.getElementById('msgs').innerHTML = '';
+  socket.emit('get_dm_history', { to_id: friend.id });
+  closeSb();
+}
+
+function setDMHeader() {
+  const online = dmTarget && dmTarget.online;
+  document.getElementById('r-emoji').textContent = '💬';
+  document.getElementById('r-name').textContent  = dmTarget ? dmTarget.nickname : '';
+  document.title = '💬 ' + (dmTarget ? dmTarget.nickname : '') + ' · deúres';
+  const badge = document.getElementById('online-badge');
+  badge.innerHTML = `<div class="dot${online ? '' : ' offline'}"></div><span>${online ? 'en línea' : 'desconectado'}</span>`;
+}
+
+function setHeader(name, emoji) {
+  document.getElementById('r-name').textContent  = name;
+  document.getElementById('r-emoji').textContent = emoji;
+  document.title = emoji + ' ' + name + ' · deúres';
+  document.getElementById('online-badge').innerHTML =
+    '<div class="dot"></div><span id="online-n">0</span>';
+}
+
+function highlight(id) {
+  document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
+  if (id) {
+    const btn = document.getElementById('rb-' + id);
+    if (btn) { btn.classList.add('active'); btn.scrollIntoView({block:'nearest'}); }
+  }
+}
+
+function addRoomBtn(r) {
+  const nav = document.getElementById('sidebar');
+  const hr  = nav.querySelector('.sb-divider');
+  const btn = document.createElement('button');
+  btn.className = 'room-btn'; btn.id = 'rb-' + r.id;
+  btn.innerHTML = `<span class="remi">${r.emoji}</span>${r.name}`;
+  btn.onclick   = () => switchRoom(r.id, r.name, r.emoji);
+  nav.insertBefore(btn, hr);
+}
+
+// ── Mensajes ──────────────────────────────────────────────────────────────────
+function appendMsg(msg) {
+  const wrap = document.getElementById('msgs');
+  const div  = document.createElement('div');
+  div.id = 'm-' + msg.id;
+
+  if (msg.kind === 'system') {
+    div.className = 'msg system';
+    div.innerHTML = `<div class="bubble">${esc(msg.text)}</div>`;
+  } else {
+    const isMe = (msg.user_id === USER_ID);
+    div.className = 'msg ' + (isMe ? 'me' : 'other');
+    let inner = '';
+    if (\!isMe) inner += `<div class="nick">${esc(msg.nickname)}</div>`;
+    inner += '<div class="bubble-row">';
+    if ((IS_ADMIN || isMe) && msg.kind \!== 'system') {
+      inner += `<button class="del-btn" title="Eliminar" onclick="deleteMsg('${msg.id}')">🗑</button>`;
+    }
+    inner += '<div class="bubble">';
+    if (msg.text) inner += esc(msg.text).replace(/\n/g,'<br>');
+    if (msg.file_url) {
+      if (msg.is_img) {
+        inner += `<img class="msg-img" src="${msg.file_url}" alt="${esc(msg.file_name)}" onclick="openLb('${msg.file_url}')">`;
+      } else {
+        inner += `<a class="file-link" href="${msg.file_url}" target="_blank" download>📄 ${esc(msg.file_name)}</a>`;
+      }
+    }
+    inner += '</div></div>';
+    inner += `<div class="time">${msg.time}</div>`;
+    div.innerHTML = inner;
+  }
+  wrap.appendChild(div);
+}
+
+function deleteMsg(id) {
+  if (\!confirm('¿Eliminar este mensaje?')) return;
+  socket.emit('delete_message', { room: curRoom, message_id: id });
+}
+
+function scrollBot() {
+  const w = document.getElementById('msgs');
+  w.scrollTop = w.scrollHeight;
+}
+
+function esc(s) {
+  return String(s||'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Enviar ────────────────────────────────────────────────────────────────────
+function sendMsg() {
+  const inp  = document.getElementById('msg-input');
+  const text = inp.value.trim();
+  if (\!text && \!pendingFile) return;
+
+  if (pendingFile) {
+    uploadThenSend(text);
+  } else {
+    if (isDM && dmTarget) {
+      socket.emit('send_dm', { to_id: dmTarget.id, text });
+    } else {
+      socket.emit('send_message', { room: curRoom, text });
+    }
+    inp.value = ''; autoH(inp);
+  }
+}
+
+// ── Archivos ──────────────────────────────────────────────────────────────────
+function fileSelected(e) {
+  const f = e.target.files[0]; if (\!f) return;
+  pendingFile = f;
+  document.getElementById('fp-name').textContent = f.name;
+  document.getElementById('fp').classList.add('show');
+}
+
+function clearFile() {
+  pendingFile = null;
+  document.getElementById('file-input').value = '';
+  document.getElementById('fp').classList.remove('show');
+}
+
+function uploadThenSend(extraText) {
+  const fd   = new FormData(); fd.append('file', pendingFile);
+  const prog = document.getElementById('up-prog');
+  const bar  = document.getElementById('up-bar');
+  prog.classList.add('show');
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST','/upload');
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable) bar.style.width = (e.loaded/e.total*100)+'%';
+  };
+  xhr.onload = () => {
+    prog.classList.remove('show'); bar.style.width='0%';
+    if (xhr.status === 200) {
+      const d = JSON.parse(xhr.responseText);
+      const payload = { text: extraText, file_url: d.url, file_name: d.name, is_image: d.is_image };
+      if (isDM && dmTarget) {
+        socket.emit('send_dm', { to_id: dmTarget.id, ...payload });
+      } else {
+        socket.emit('send_message', { room: curRoom, ...payload });
+      }
+      const inp = document.getElementById('msg-input');
+      inp.value=''; autoH(inp); clearFile();
+    } else {
+      alert('Error al subir el archivo. Tamaño máximo: 20 MB');
+    }
+  };
+  xhr.onerror = () => { prog.classList.remove('show'); alert('Error de red'); };
+  xhr.send(fd);
+}
+
+// ── Modal buscar amigo ────────────────────────────────────────────────────────
+let searchTimer = null;
+function openSearchModal()  {
+  document.getElementById('search-modal').classList.add('open');
+  document.getElementById('search-input').focus();
+}
+function closeSearchModal() {
+  document.getElementById('search-modal').classList.remove('open');
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-results').innerHTML = '';
+}
+
+function searchFriends() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const q = document.getElementById('search-input').value.trim();
+    if (q.length < 2) { document.getElementById('search-results').innerHTML = ''; return; }
+    fetch('/api/friends/search?q=' + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(results => {
+        const container = document.getElementById('search-results');
+        if (results.length === 0) {
+          container.innerHTML = '<div style="font-size:.82rem;color:var(--text2);padding:.3rem .5rem">Sin resultados</div>';
+          return;
+        }
+        container.innerHTML = '';
+        results.forEach(u => {
+          const alreadyFriend = \!\!friendsData[u.id];
+          const div = document.createElement('div');
+          div.className = 'search-result';
+          div.innerHTML = `<span class="sr-nick">${esc(u.nickname)}</span>
+            <button class="btn btn-primary btn-sm sr-action" ${alreadyFriend ? 'disabled' : ''}
+              onclick="sendRequest(${u.id}, this)">
+              ${alreadyFriend ? '✅ Amigos' : '➕ Añadir'}
+            </button>`;
+          container.appendChild(div);
+        });
+      });
+  }, 300);
+}
+
+function sendRequest(uid, btn) {
+  fetch('/api/friends/request/' + uid, { method:'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        btn.textContent = '⏳ Enviado';
+        btn.disabled = true;
+      } else {
+        alert(d.error || 'Error');
+      }
+    });
+}
+
+// ── Modal solicitudes pendientes ──────────────────────────────────────────────
+function openPendingModal() {
+  renderPendingList();
+  document.getElementById('pending-modal').classList.add('open');
+}
+function closePendingModal() {
+  document.getElementById('pending-modal').classList.remove('open');
+}
+
+function renderPendingList() {
+  const container = document.getElementById('pending-list');
+  container.innerHTML = '';
+  if (pendingReqs.length === 0) {
+    container.innerHTML = '<div style="font-size:.85rem;color:var(--text2);padding:.3rem .5rem">No hay solicitudes pendientes.</div>';
+    return;
+  }
+  pendingReqs.forEach(req => {
+    const div = document.createElement('div');
+    div.className = 'pending-item'; div.id = 'pr-' + req.from_id;
+    div.innerHTML = `<span class="pi-nick">${esc(req.from_nick)}</span>
+      <div class="pending-btns">
+        <button class="btn btn-primary btn-sm" onclick="acceptReq(${req.from_id})">✅ Aceptar</button>
+        <button class="btn btn-ghost btn-sm"   onclick="declineReq(${req.from_id})">✕</button>
+      </div>`;
+    container.appendChild(div);
+  });
+}
+
+function acceptReq(uid) {
+  fetch('/api/friends/accept/' + uid, { method:'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        pendingReqs = pendingReqs.filter(r => r.from_id \!== uid);
+        updatePendingBadge();
+        document.getElementById('pr-' + uid)?.remove();
+        loadFriends();
+      }
+    });
+}
+
+function declineReq(uid) {
+  fetch('/api/friends/decline/' + uid, { method:'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        pendingReqs = pendingReqs.filter(r => r.from_id \!== uid);
+        updatePendingBadge();
+        document.getElementById('pr-' + uid)?.remove();
+      }
+    });
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function autoH(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,110)+'px'; }
+
+function toggleSb() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-ov').classList.toggle('open');
+}
+function closeSb() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-ov').classList.remove('open');
+}
+
+function openLb(src) { document.getElementById('lb-img').src=src; document.getElementById('lb').classList.add('open'); }
+function closeLb()   { document.getElementById('lb').classList.remove('open'); }
+
+// Close modals on overlay click
+document.getElementById('search-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('search-modal')) closeSearchModal();
+});
+document.getElementById('pending-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('pending-modal')) closePendingModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSearchModal(); closePendingModal(); closeLb(); }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block title %}Panel de administración — deúres{% endblock %}
+{% block extra_styles %}
+<style>
+.layout { display: flex; flex-direction: column; min-height: 100vh; }
+
+.admin-top {
+  display: flex; align-items: center; gap: .8rem; padding: .7rem 1.2rem;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+}
+.admin-top h1 { font-size: 1.1rem; flex: 1; }
+.admin-top a  { font-size: .85rem; }
+
+.admin-body { display: flex; flex: 1; gap: 0; }
+
+/* Columnes */
+.col { flex: 1; padding: 1.4rem; overflow-y: auto; }
+.col + .col { border-left: 1px solid var(--border); }
+
+.section-title {
+  font-size: .7rem; color: var(--text2); text-transform: uppercase;
+  letter-spacing: .08em; margin-bottom: 1rem;
+}
+.section-title span { font-size: 1rem; }
+
+/* Taula d'usuaris */
+.user-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.user-table th {
+  text-align: left; padding: .45rem .6rem; font-size: .7rem; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border);
+}
+.user-table td { padding: .55rem .6rem; border-bottom: 1px solid rgba(255,255,255,.04); }
+.user-table tr:last-child td { border-bottom: none; }
+.user-table tr.banned-row td { opacity: .5; }
+
+.actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+
+/* Llista de sales */
+.room-list { display: flex; flex-direction: column; gap: .5rem; margin-bottom: 1.5rem; }
+.room-item {
+  display: flex; align-items: center; gap: .65rem;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: .5rem .8rem;
+}
+.room-item .ri-info { flex: 1; font-size: .9rem; }
+.room-item .ri-emoji { font-size: 1.2rem; width: 24px; text-align: center; }
+.room-item .ri-actions { display: flex; gap: .35rem; }
+
+/* Formulari de nova sala */
+.new-room-form {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1rem;
+}
+.new-room-form h4 { font-size: .82rem; color: var(--text2); margin-bottom: .8rem; }
+.form-row { display: flex; gap: .5rem; }
+.form-row input { flex: 1; }
+.form-row input.emoji-inp { width: 56px; flex: none; text-align: center; font-size: 1.2rem; }
+
+/* Diàleg de reanomenar */
+#rename-dialog {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100;
+  align-items: center; justify-content: center;
+}
+#rename-dialog.open { display: flex; }
+.dialog-box {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1.5rem; width: min(360px,92vw);
+  box-shadow: var(--shadow);
+}
+.dialog-box h3 { margin-bottom: 1rem; font-size: 1rem; }
+.dialog-box .btns { display: flex; gap: .5rem; margin-top: 1.2rem; justify-content: flex-end; }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: 1.5rem; right: 1.5rem;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: .6rem 1.1rem; font-size: .85rem;
+  box-shadow: var(--shadow); transition: opacity .3s; opacity: 0; z-index: 300;
+}
+#toast.show { opacity: 1; }
+
+@media (max-width: 720px) {
+  .admin-body { flex-direction: column; }
+  .col + .col { border-left: none; border-top: 1px solid var(--border); }
+}
+</style>
+{% endblock %}
+{% block body %}
+<div class="layout">
+
+  <!-- Topbar admin -->
+  <div class="admin-top">
+    <h1>⚙️ Panel de administración · deúres</h1>
+    <a href="/" class="btn btn-ghost btn-sm">← Volver al chat</a>
+    <a href="/logout" class="btn btn-ghost btn-sm">Salir</a>
+  </div>
+
+  <div class="admin-body">
+
+    <!-- ── Columna usuarios ── -->
+    <div class="col">
+      <div class="section-title"><span>👥</span> Usuarios registrados ({{ users|length }})</div>
+
+      <table class="user-table">
+        <thead>
+          <tr>
+            <th>Alias</th>
+            <th>Correo</th>
+            <th>Rol</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="user-tbody">
+        {% for u in users %}
+        <tr id="ur-{{ u.id }}" class="{{ 'banned-row' if u.banned else '' }}">
+          <td>
+            {{ u.nickname }}
+            {% if u.banned %}<span class="badge badge-banned">suspendido</span>{% endif %}
+          </td>
+          <td style="color:var(--text2);font-size:.8rem">{{ u.email }}</td>
+          <td>
+            <span class="badge {{ 'badge-admin' if u.role=='admin' else 'badge-user' }}">
+              {{ u.role }}
+            </span>
+          </td>
+          <td>
+            <div class="actions">
+              {% if u.id != user.id %}
+                {% if not u.banned %}
+                <button class="btn btn-warn btn-sm"
+                  onclick="userAction({{ u.id }},'ban','¿Banear a {{ u.nickname }}?')">
+                  🚫 Banear
+                </button>
+                {% else %}
+                <button class="btn btn-ghost btn-sm"
+                  onclick="userAction({{ u.id }},'unban','¿Desbanear a {{ u.nickname }}?')">
+                  ✅ Desbanear
+                </button>
+                {% endif %}
+                {% if u.role != 'admin' %}
+                <button class="btn btn-ghost btn-sm"
+                  onclick="userAction({{ u.id }},'promote','¿Hacer admin a {{ u.nickname }}?')">
+                  ⭐ Admin
+                </button>
+                {% endif %}
+                <button class="btn btn-danger btn-sm"
+                  onclick="userAction({{ u.id }},'delete','¿Eliminar la cuenta de {{ u.nickname }}? Acción irreversible.')">
+                  🗑 Eliminar
+                </button>
+              {% else %}
+                <span style="color:var(--text2);font-size:.78rem">(tu)</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Columna salas ── -->
+    <div class="col">
+      <div class="section-title"><span>💬</span> Salas de chat ({{ rooms|length }})</div>
+
+      <div class="room-list" id="room-list">
+        {% for r in rooms %}
+        <div class="room-item" id="ri-{{ r.id }}">
+          <span class="ri-emoji">{{ r.emoji }}</span>
+          <span class="ri-info">{{ r.name }}</span>
+          <div class="ri-actions">
+            <button class="btn btn-ghost btn-sm"
+              onclick="openRename('{{ r.id }}','{{ r.name }}','{{ r.emoji }}')">
+              ✏️
+            </button>
+            <button class="btn btn-danger btn-sm"
+              onclick="deleteRoom('{{ r.id }}','{{ r.name }}')">
+              🗑
+            </button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Nueva sala -->
+      <div class="new-room-form">
+        <h4>➕ Añadir nueva sala</h4>
+        <div class="form-row">
+          <input class="emoji-inp" type="text" id="new-emoji" value="💬" maxlength="2" placeholder="🔥">
+          <input type="text" id="new-name" placeholder="Nombre de la sala" maxlength="40">
+          <button class="btn btn-primary btn-sm" onclick="createRoom()">Crear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Diálogo renombrar -->
+<div id="rename-dialog">
+  <div class="dialog-box">
+    <h3>✏️ Renombrar sala</h3>
+    <input type="hidden" id="rn-id">
+    <label>Emoji</label>
+    <input type="text" id="rn-emoji" maxlength="2" style="width:60px;text-align:center;font-size:1.2rem">
+    <label>Nombre</label>
+    <input type="text" id="rn-name" maxlength="40">
+    <div class="btns">
+      <button class="btn btn-ghost" onclick="closeRename()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmRename()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+function showToast(msg, ok=true) {
+  const t = document.getElementById('toast');
+  t.textContent = (ok ? '✅ ' : '❌ ') + msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── Acciones de usuarios ─────────────────────────────────────────────────────
+function userAction(uid, action, confirmMsg) {
+  if (!confirm(confirmMsg)) return;
+  fetch(`/admin/user/${uid}/${action}`, { method:'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        const row = document.getElementById('ur-' + uid);
+        if (!row) return;
+        if (action === 'delete') {
+          row.remove(); showToast('Usuario eliminado');
+        } else if (action === 'ban') {
+          row.classList.add('banned-row'); showToast('Usuario baneado');
+          location.reload();
+        } else if (action === 'unban') {
+          row.classList.remove('banned-row'); showToast('Usuario desbaneado');
+          location.reload();
+        } else if (action === 'promote') {
+          showToast('Usuario promocionado a admin'); location.reload();
+        }
+      } else {
+        showToast(d.error || 'Error', false);
+      }
+    });
+}
+
+// ── Salas ─────────────────────────────────────────────────────────────────────
+function createRoom() {
+  const name  = document.getElementById('new-name').value.trim();
+  const emoji = document.getElementById('new-emoji').value.trim() || '💬';
+  if (!name) { alert('Escribe un nombre para la sala'); return; }
+  fetch('/admin/room/create', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, emoji })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      document.getElementById('new-name').value  = '';
+      document.getElementById('new-emoji').value = '💬';
+      const list = document.getElementById('room-list');
+      const div  = document.createElement('div');
+      div.className = 'room-item'; div.id = 'ri-' + d.id;
+      div.innerHTML = `
+        <span class="ri-emoji">${d.emoji}</span>
+        <span class="ri-info">${d.name}</span>
+        <div class="ri-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openRename('${d.id}','${d.name}','${d.emoji}')">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRoom('${d.id}','${d.name}')">🗑</button>
+        </div>`;
+      list.appendChild(div);
+      showToast(`Sala "${d.name}" creada ✓`);
+    } else {
+      showToast(d.error || 'Error', false);
+    }
+  });
+}
+
+function deleteRoom(rid, name) {
+  if (!confirm(`¿Eliminar la sala "${name}"? Los mensajes se perderán.`)) return;
+  fetch(`/admin/room/${rid}/delete`, { method:'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        document.getElementById('ri-' + rid)?.remove();
+      showToast(`Sala "${name}" eliminada`);
+      } else showToast(d.error||'Error', false);
+    });
+}
+
+function openRename(rid, name, emoji) {
+  document.getElementById('rn-id').value    = rid;
+  document.getElementById('rn-name').value  = name;
+  document.getElementById('rn-emoji').value = emoji;
+  document.getElementById('rename-dialog').classList.add('open');
+  document.getElementById('rn-name').focus();
+}
+
+function closeRename() {
+  document.getElementById('rename-dialog').classList.remove('open');
+}
+
+function confirmRename() {
+  const rid   = document.getElementById('rn-id').value;
+  const name  = document.getElementById('rn-name').value.trim();
+  const emoji = document.getElementById('rn-emoji').value.trim() || '💬';
+  if (!name) { alert('Escribe un nombre'); return; }
+  fetch(`/admin/room/${rid}/rename`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, emoji })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      const item = document.getElementById('ri-' + rid);
+      if (item) {
+        item.querySelector('.ri-emoji').textContent = emoji;
+        item.querySelector('.ri-info').textContent  = name;
+        item.querySelector('.btn-ghost').onclick = () => openRename(rid, name, emoji);
+      }
+      closeRename(); showToast(`Sala renombrada a "${name}"`);
+    } else showToast(d.error||'Error', false);
+  });
+}
+
+document.getElementById('rename-dialog').addEventListener('click', function(e){
+  if (e.target === this) closeRename();
+});
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRename(); });
+</script>
+{% endblock %}

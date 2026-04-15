@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Iniciar sesión — deúres{% endblock %}
+{% block extra_styles %}
+<style>
+.auth-wrap {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 60% 30%, #1e1b4b 0%, var(--bg) 70%);
+}
+.auth-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 2.5rem 2rem;
+  width: min(400px, 94vw); box-shadow: var(--shadow);
+}
+.auth-logo { text-align: center; font-size: 2.4rem; margin-bottom: .2rem; }
+.auth-title { text-align: center; font-size: 1.7rem; font-weight: 800; margin-bottom: .25rem; }
+.auth-sub { text-align: center; color: var(--text2); font-size: .88rem; margin-bottom: 1.8rem; }
+.auth-footer { text-align: center; margin-top: 1.2rem; font-size: .84rem; color: var(--text2); }
+</style>
+{% endblock %}
+{% block body %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">📚</div>
+    <div class="auth-title">deúres</div>
+    <div class="auth-sub">Inicia sesión para continuar</div>
+
+    {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+
+    <form method="post" autocomplete="on">
+      <label>Correo electrónico</label>
+      <input type="email" name="email" placeholder="nombre@ejemplo.com" required autocomplete="email">
+      <label>Contraseña</label>
+      <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+      <button class="btn btn-primary" style="width:100%;margin-top:1.6rem;padding:.8rem" type="submit">
+        Entrar →
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      ¿No tienes cuenta? <a href="/register">Regístrate</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

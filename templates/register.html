@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Registrarse — deúres{% endblock %}
+{% block extra_styles %}
+<style>
+.auth-wrap {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 60% 30%, #1e1b4b 0%, var(--bg) 70%);
+}
+.auth-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 2.5rem 2rem;
+  width: min(420px, 94vw); box-shadow: var(--shadow);
+}
+.auth-logo  { text-align: center; font-size: 2.4rem; margin-bottom: .2rem; }
+.auth-title { text-align: center; font-size: 1.7rem; font-weight: 800; margin-bottom: .25rem; }
+.auth-sub   { text-align: center; color: var(--text2); font-size: .88rem; margin-bottom: 1.8rem; }
+.auth-footer{ text-align: center; margin-top: 1.2rem; font-size: .84rem; color: var(--text2); }
+.info-box {
+  background: rgba(108,99,255,.1); border: 1px solid rgba(108,99,255,.3);
+  color: var(--accent2); border-radius: 10px; padding: .55rem 1rem;
+  font-size: .8rem; margin-bottom: 1rem;
+}
+</style>
+{% endblock %}
+{% block body %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">📚</div>
+    <div class="auth-title">deúres</div>
+    <div class="auth-sub">Crea tu cuenta</div>
+
+    <div class="info-box">⭐ El primer usuario registrado será automáticamente administrador.</div>
+
+    {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+
+    <form method="post" autocomplete="on">
+      <label>Nombre o alias</label>
+      <input type="text" name="nickname" placeholder="Ej: María, ProfeJuan…" maxlength="24" required autocomplete="username">
+      <label>Correo electrónico</label>
+      <input type="email" name="email" placeholder="nombre@ejemplo.com" required autocomplete="email">
+      <label>Contraseña</label>
+      <input type="password" name="password" placeholder="Mínimo 6 caracteres" required autocomplete="new-password">
+      <label>Confirmar contraseña</label>
+      <input type="password" name="confirm" placeholder="Repite la contraseña" required autocomplete="new-password">
+      <button class="btn btn-primary" style="width:100%;margin-top:1.6rem;padding:.8rem" type="submit">
+        Crear cuenta →
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      ¿Ya tienes cuenta? <a href="/login">Inicia sesión</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
