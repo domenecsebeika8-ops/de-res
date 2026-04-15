@@ -1,34 +1,21 @@
-const SW_VERSION = 2;
+const SW_VERSION = 3;
 
 self.addEventListener('install', e => {
   console.log('[SW] Installing v' + SW_VERSION);
-  self.skipWaiting();
+  e.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', e => {
   console.log('[SW] Activating v' + SW_VERSION);
-  e.waitUntil(clients.claim());
-});
-
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  e.respondWith(fetch(e.request).catch(() => new Response('Offline', {status: 503})));
+  e.waitUntil(self.clients.claim());
 });
 
 self.addEventListener('push', e => {
-  console.log('[SW] Push received', e);
-  if (!e.data) {
-    console.log('[SW] Push has no data');
-    return;
-  }
+  console.log('[SW] Push received');
+  if (!e.data) return;
   let data;
-  try {
-    data = e.data.json();
-    console.log('[SW] Push data:', data);
-  } catch(err) {
-    console.log('[SW] Failed to parse push data:', err);
-    data = { title: 'deúres', body: e.data.text() };
-  }
+  try { data = e.data.json(); }
+  catch(err) { data = { title: 'deúres', body: e.data.text() }; }
   e.waitUntil(
     self.registration.showNotification(data.title || 'deúres', {
       body: data.body || '',
@@ -36,12 +23,7 @@ self.addEventListener('push', e => {
       badge: '/static/icon-192.png',
       tag: 'deures-msg',
       renotify: true,
-      requireInteraction: false,
       data: { url: data.url || '/' }
-    }).then(() => {
-      console.log('[SW] Notification shown OK');
-    }).catch(err => {
-      console.log('[SW] showNotification error:', err);
     })
   );
 });
@@ -49,11 +31,11 @@ self.addEventListener('push', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(
-    clients.matchAll({ type: 'window' }).then(list => {
+    self.clients.matchAll({ type: 'window' }).then(list => {
       for (const c of list) {
-        if (c.url === e.notification.data.url && 'focus' in c) return c.focus();
+        if ('focus' in c) return c.focus();
       }
-      if (clients.openWindow) return clients.openWindow(e.notification.data.url);
+      if (self.clients.openWindow) return self.clients.openWindow(e.notification.data.url || '/');
     })
   );
 });

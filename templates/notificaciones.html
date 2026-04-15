@@ -66,22 +66,31 @@ async function activar() {
 
     setStatus('Permiso concedido, registrando…', 'info');
 
-    // Registrar SW si no está
-    let swRegistration = await navigator.serviceWorker.getRegistration('/');
-    if (!swRegistration) {
-      swRegistration = await navigator.serviceWorker.register('/static/sw.js');
-      await new Promise(r => setTimeout(r, 2000));
+    // Forzar registro del SW
+    let reg;
+    try {
+      reg = await navigator.serviceWorker.register('/static/sw.js', { updateViaCache: 'none' });
+      // Esperar a que haya un SW activo
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('SW no activó a tiempo. Recarga e inténtalo de nuevo.')), 10000);
+        const check = () => {
+          const sw = reg.installing || reg.waiting || reg.active;
+          if (reg.active) { clearTimeout(timeout); resolve(); return; }
+          if (sw) sw.addEventListener('statechange', check);
+          else reject(new Error('No se pudo registrar el service worker.'));
+        };
+        if (reg.active) { clearTimeout(timeout); resolve(); }
+        else check();
+      });
+    } catch(err) {
+      throw new Error('SW error: ' + err.message);
     }
 
-    // Esperar SW activo con timeout de 8s
-    const reg = await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Service worker tardó demasiado. Recarga la página e inténtalo de nuevo.')), 8000))
-    ]);
-
     // Cancelar suscripción anterior si existe
-    const existing = await reg.pushManager.getSubscription();
-    if (existing) await existing.unsubscribe();
+    try {
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) await existing.unsubscribe();
+    } catch(e) {}
 
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
