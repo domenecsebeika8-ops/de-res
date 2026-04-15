@@ -86,8 +86,36 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
 </div>
 
 <script>
+const VAPID_PUBLIC_KEY = '{{ vapid_public_key }}';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function setupPush(reg) {
+  if (!('PushManager' in window)) return;
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub)
+    });
+  } catch(e) { console.log('Push setup failed:', e); }
+}
+
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js');
+  navigator.serviceWorker.register('/static/sw.js').then(reg => {
+    setTimeout(() => setupPush(reg), 2000);
+  });
 }
 
 let deferredPrompt;

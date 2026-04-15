@@ -28,9 +28,11 @@ DB_PATH    = os.path.join(DATA_DIR, "deures.db")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL  = os.environ.get("DATABASE_URL")
+VAPID_PUBLIC  = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIMS  = {"sub": "mailto:admin@deures.app"}
 
-# ── DB abstraction (SQLite local / PostgreSQL on server) ──────────────────────
 if DATABASE_URL:
     import psycopg2, psycopg2.extras
     def get_db():
@@ -109,6 +111,14 @@ def init_db():
         created_at   {TSTAMP},
         UNIQUE(requester_id, addressee_id)
     )""")
+    dbq(db, f"""CREATE TABLE IF NOT EXISTS push_subs (
+        {ID_COL},
+        user_id   INTEGER NOT NULL,
+        endpoint  TEXT NOT NULL UNIQUE,
+        p256dh    TEXT NOT NULL,
+        auth      TEXT NOT NULL,
+        created_at {TSTAMP}
+    )""")
     if dbscalar(db, "SELECT COUNT(*) FROM rooms") == 0:
         dbmany(db, "INSERT INTO rooms (id,name,emoji) VALUES (?,?,?)", DEFAULT_ROOMS)
     db.commit(); db.close()
@@ -131,6 +141,30 @@ def get_friends(user_id):
     """, (user_id, user_id, user_id)).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+def send_push(user_id, title, body, url="/"):
+    if not VAPID_PUBLIC or not VAPID_PRIVATE:
+        return
+    try:
+        from pywebpush import webpush
+        import json as _json
+        db   = get_db()
+        subs = dbq(db, "SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?",
+                   (user_id,)).fetchall()
+        db.close()
+        for s in subs:
+            try:
+                webpush(
+                    subscription_info={"endpoint": s["endpoint"],
+                                       "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}},
+                    data=_json.dumps({"title": title, "body": body, "url": url}),
+                    vapid_private_key=VAPID_PRIVATE,
+                    vapid_claims=VAPID_CLAIMS
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 class User(UserMixin):
     def __init__(self, row):
@@ -158,6 +192,10 @@ def admin_required(f):
             return redirect(url_for("index"))
         return f(*a, **kw)
     return dec
+
+@app.context_processor
+def inject_vapid():
+    return {"vapid_public_key": VAPID_PUBLIC}
 
 ALLOWED = {"png","jpg","jpeg","gif","webp","pdf","doc","docx","txt"}
 def allowed(fn):  return "." in fn and fn.rsplit(".",1)[1].lower() in ALLOWED
@@ -239,6 +277,25 @@ def logout():
 @login_required
 def index():
     return render_template("chat.html", rooms=get_rooms(), user=current_user)
+
+@app.route("/api/push/subscribe", methods=["POST"])
+@login_required
+def push_subscribe():
+    data   = request.get_json()
+    ep     = data.get("endpoint","")
+    p256dh = data.get("keys",{}).get("p256dh","")
+    auth   = data.get("keys",{}).get("auth","")
+    if not ep or not p256dh or not auth:
+        return jsonify({"error":"datos incompletos"}), 400
+    db = get_db()
+    try:
+        dbq(db, "INSERT INTO push_subs (user_id,endpoint,p256dh,auth) VALUES (?,?,?,?)",
+            (current_user.id, ep, p256dh, auth))
+    except Exception:
+        dbq(db, "UPDATE push_subs SET p256dh=?,auth=? WHERE endpoint=?",
+            (p256dh, auth, ep))
+    db.commit(); db.close()
+    return jsonify({"ok": True})
 
 @app.route("/upload", methods=["POST"])
 @login_required
@@ -470,6 +527,16 @@ def on_send_message(data):
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
     emit("new_message", {"room": room, "message": msg}, room=room)
+    body = (text or "Archivo adjunto")[:80]
+    online_in_room = room_users.get(room, set())
+    db = get_db()
+    others = [dict(r) for r in dbq(db, "SELECT id FROM users WHERE id != ?", (current_user.id,)).fetchall()]
+    db.close()
+    for u in others:
+        if u["id"] not in online_in_room:
+            threading.Thread(target=send_push, args=(
+                u["id"], f"{current_user.nickname} en #{room}", body, "/"
+            ), daemon=True).start()
 
 @socketio.on("delete_message")
 def on_delete_message(data):
@@ -497,6 +564,10 @@ def on_send_dm(data):
     emit("dm_message", {"room": room, "to_id": to_id, "message": msg}, room=room)
     socketio.emit("dm_message", {"room": room, "to_id": to_id, "message": msg},
                   room=f"user_{to_id}")
+    body = (text or "Archivo adjunto")[:80]
+    threading.Thread(target=send_push, args=(
+        to_id, f"Mensaje de {current_user.nickname}", body, "/"
+    ), daemon=True).start()
 
 @socketio.on("get_dm_history")
 def on_get_dm_history(data):
