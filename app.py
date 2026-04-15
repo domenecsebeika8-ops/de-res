@@ -119,6 +119,31 @@ def init_db():
         auth      TEXT NOT NULL,
         created_at {TSTAMP}
     )""")
+    dbq(db, f"""CREATE TABLE IF NOT EXISTS tasks (
+        {ID_COL},
+        room_id    TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        done       INTEGER DEFAULT 0,
+        created_by INTEGER,
+        created_at {TSTAMP}
+    )""")
+    dbq(db, f"""CREATE TABLE IF NOT EXISTS groups_tbl (
+        {ID_COL},
+        name       TEXT NOT NULL,
+        emoji      TEXT DEFAULT '\U0001f465',
+        created_by INTEGER,
+        created_at {TSTAMP}
+    )""")
+    dbq(db, f"""CREATE TABLE IF NOT EXISTS group_members (
+        group_id   INTEGER NOT NULL,
+        user_id    INTEGER NOT NULL,
+        PRIMARY KEY (group_id, user_id)
+    )""")
+    try:
+        dbq(db, "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
+        db.commit()
+    except Exception:
+        pass
     if dbscalar(db, "SELECT COUNT(*) FROM rooms") == 0:
         dbmany(db, "INSERT INTO rooms (id,name,emoji) VALUES (?,?,?)", DEFAULT_ROOMS)
     db.commit(); db.close()
@@ -139,6 +164,27 @@ def get_friends(user_id):
         )
         WHERE (f.requester_id=? OR f.addressee_id=?) AND f.status='accepted'
     """, (user_id, user_id, user_id)).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+def get_groups(user_id):
+    db = get_db()
+    rows = dbq(db, """
+        SELECT g.id, g.name, g.emoji, g.created_by FROM groups_tbl g
+        JOIN group_members gm ON g.id = gm.group_id
+        WHERE gm.user_id=?
+        ORDER BY g.created_at
+    """, (user_id,)).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+def get_group_members(group_id):
+    db = get_db()
+    rows = dbq(db, """
+        SELECT u.id, u.nickname, u.avatar FROM users u
+        JOIN group_members gm ON u.id = gm.user_id
+        WHERE gm.group_id=?
+    """, (group_id,)).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -185,6 +231,7 @@ class User(UserMixin):
         self.nickname = row["nickname"]
         self.role     = row["role"]
         self.banned   = row["banned"]
+        self.avatar   = row["avatar"] if "avatar" in row.keys() else ""
     @property
     def is_admin(self):  return self.role == "admin"
     @property
@@ -207,7 +254,8 @@ def admin_required(f):
 
 @app.context_processor
 def inject_vapid():
-    return {"vapid_public_key": VAPID_PUBLIC}
+    av = current_user.avatar if current_user.is_authenticated and hasattr(current_user, "avatar") else ""
+    return {"vapid_public_key": VAPID_PUBLIC, "current_avatar": av}
 
 ALLOWED = {"png","jpg","jpeg","gif","webp","pdf","doc","docx","txt"}
 def allowed(fn):  return "." in fn and fn.rsplit(".",1)[1].lower() in ALLOWED
@@ -218,10 +266,11 @@ room_users   = {}
 sid_rooms    = {}
 online_users = {}
 
-def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False):
+def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False, reply_to=None, avatar=""):
     return {"id": str(uuid.uuid4()), "kind": kind, "user_id": uid,
             "nickname": nick, "text": text, "file_url": furl,
-            "file_name": fname, "is_img": img,
+            "file_name": fname, "is_img": img, "avatar": avatar,
+            "reply_to": reply_to, "reactions": {},
             "time": datetime.now().strftime("%H:%M")}
 
 def dm_room(a, b):
@@ -288,7 +337,8 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("chat.html", rooms=get_rooms(), user=current_user)
+    return render_template("chat.html", rooms=get_rooms(), user=current_user,
+                           groups=get_groups(current_user.id))
 
 @app.route("/api/push/subscribe", methods=["POST"])
 @login_required
@@ -332,7 +382,7 @@ def push_test():
                 webpush(
                     subscription_info={"endpoint": s["endpoint"],
                                        "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}},
-                    data=_json.dumps({"title": "Prueba deúres", "body": "Notificaciones funcionando\!", "url": "/"}),
+                    data=_json.dumps({"title": "Prueba deúres", "body": "Notificaciones funcionando!", "url": "/"}),
                     vapid_private_key=VAPID_PRIVATE,
                     vapid_claims=VAPID_CLAIMS
                 )
@@ -522,6 +572,143 @@ def admin_room_delete(rid):
     socketio.emit("room_deleted", {"id": rid})
     return jsonify({"ok": True})
 
+# ── Avatar ──
+@app.route("/api/avatar", methods=["POST"])
+@login_required
+def set_avatar():
+    data   = request.get_json()
+    avatar = (data.get("avatar") or "")[:8]
+    db = get_db()
+    dbq(db, "UPDATE users SET avatar=? WHERE id=?", (avatar, current_user.id))
+    db.commit(); db.close()
+    current_user.avatar = avatar
+    return jsonify({"ok": True})
+
+# ── Groups ──
+@app.route("/api/groups")
+@login_required
+def api_groups():
+    return jsonify(get_groups(current_user.id))
+
+@app.route("/api/groups/create", methods=["POST"])
+@login_required
+def api_group_create():
+    data  = request.get_json()
+    name  = (data.get("name") or "").strip()[:40]
+    emoji = (data.get("emoji") or "👥").strip()[:4]
+    friends = data.get("members", [])
+    if not name: return jsonify({"error": "Nombre vacio"}), 400
+    db = get_db()
+    dbq(db, "INSERT INTO groups_tbl (name, emoji, created_by) VALUES (?,?,?)",
+        (name, emoji, current_user.id))
+    db.commit()
+    gid = dbscalar(db, "SELECT id FROM groups_tbl WHERE created_by=? ORDER BY created_at DESC LIMIT 1",
+                   (current_user.id,))
+    dbq(db, "INSERT INTO group_members (group_id, user_id) VALUES (?,?)", (gid, current_user.id))
+    for fid in friends:
+        try:
+            dbq(db, "INSERT INTO group_members (group_id, user_id) VALUES (?,?)", (gid, int(fid)))
+        except Exception:
+            pass
+    db.commit(); db.close()
+    group = {"id": gid, "name": name, "emoji": emoji, "created_by": current_user.id}
+    members = get_group_members(gid)
+    for m in members:
+        socketio.emit("group_created", {"group": group, "members": members}, room=f"user_{m['id']}")
+    return jsonify({"ok": True, "group": group})
+
+@app.route("/api/groups/<int:gid>/invite", methods=["POST"])
+@login_required
+def api_group_invite(gid):
+    data = request.get_json()
+    uid  = data.get("user_id")
+    db   = get_db()
+    owner = dbscalar(db, "SELECT created_by FROM groups_tbl WHERE id=?", (gid,))
+    if owner != current_user.id:
+        db.close(); return jsonify({"error": "Sin permiso"}), 403
+    try:
+        dbq(db, "INSERT INTO group_members (group_id, user_id) VALUES (?,?)", (gid, int(uid)))
+        db.commit()
+    except Exception:
+        db.close(); return jsonify({"error": "Ya es miembro"}), 400
+    db.close()
+    group = next((g for g in get_groups(current_user.id) if g["id"] == gid), None)
+    members = get_group_members(gid)
+    if group:
+        socketio.emit("group_created", {"group": group, "members": members}, room=f"user_{uid}")
+    return jsonify({"ok": True})
+
+@app.route("/api/groups/<int:gid>/leave", methods=["POST"])
+@login_required
+def api_group_leave(gid):
+    db = get_db()
+    dbq(db, "DELETE FROM group_members WHERE group_id=? AND user_id=?", (gid, current_user.id))
+    db.commit()
+    remaining = dbscalar(db, "SELECT COUNT(*) FROM group_members WHERE group_id=?", (gid,))
+    if remaining == 0:
+        dbq(db, "DELETE FROM groups_tbl WHERE id=?", (gid,))
+        db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/groups/<int:gid>/members")
+@login_required
+def api_group_members(gid):
+    return jsonify(get_group_members(gid))
+
+# ── Tasks ──
+@app.route("/api/tasks/<room_id>")
+@login_required
+def api_tasks(room_id):
+    db   = get_db()
+    rows = dbq(db, "SELECT * FROM tasks WHERE room_id=? ORDER BY done, created_at", (room_id,)).fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route("/api/tasks/<room_id>/add", methods=["POST"])
+@login_required
+def api_task_add(room_id):
+    data  = request.get_json()
+    title = (data.get("title") or "").strip()[:200]
+    if not title: return jsonify({"error": "Titulo vacio"}), 400
+    db = get_db()
+    dbq(db, "INSERT INTO tasks (room_id, title, created_by) VALUES (?,?,?)",
+        (room_id, title, current_user.id))
+    db.commit()
+    tid  = dbscalar(db, "SELECT id FROM tasks WHERE room_id=? AND created_by=? ORDER BY created_at DESC LIMIT 1",
+                    (room_id, current_user.id))
+    db.close()
+    task = {"id": tid, "room_id": room_id, "title": title, "done": 0, "created_by": current_user.id}
+    socketio.emit("task_added", {"room_id": room_id, "task": task}, room=room_id)
+    return jsonify({"ok": True, "task": task})
+
+@app.route("/api/tasks/<int:tid>/toggle", methods=["POST"])
+@login_required
+def api_task_toggle(tid):
+    db   = get_db()
+    task = dbq(db, "SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+    if not task:
+        db.close(); return jsonify({"error": "No existe"}), 404
+    new_done = 0 if task["done"] else 1
+    dbq(db, "UPDATE tasks SET done=? WHERE id=?", (new_done, tid))
+    db.commit(); db.close()
+    socketio.emit("task_updated", {"id": tid, "done": new_done}, room=task["room_id"])
+    return jsonify({"ok": True, "done": new_done})
+
+@app.route("/api/tasks/<int:tid>/delete", methods=["POST"])
+@login_required
+def api_task_delete(tid):
+    db   = get_db()
+    task = dbq(db, "SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+    if not task:
+        db.close(); return jsonify({"error": "No existe"}), 404
+    if task["created_by"] != current_user.id and not current_user.is_admin:
+        db.close(); return jsonify({"error": "Sin permiso"}), 403
+    dbq(db, "DELETE FROM tasks WHERE id=?", (tid,))
+    db.commit(); db.close()
+    socketio.emit("task_deleted", {"id": tid, "room_id": task["room_id"]}, room=task["room_id"])
+    return jsonify({"ok": True})
+
 @socketio.on("connect")
 def on_connect():
     if not current_user.is_authenticated: return False
@@ -576,13 +763,15 @@ def on_leave(data):
 
 @socketio.on("send_message")
 def on_send_message(data):
-    room  = data.get("room","")
-    text  = (data.get("text") or "").strip()[:2000]
-    furl  = data.get("file_url","")
-    fname = data.get("file_name","")
-    img   = bool(data.get("is_image", False))
+    room     = data.get("room","")
+    text     = (data.get("text") or "").strip()[:2000]
+    furl     = data.get("file_url","")
+    fname    = data.get("file_name","")
+    img      = bool(data.get("is_image", False))
+    reply_to = data.get("reply_to", None)
     if not room or (not text and not furl): return
-    msg = make_msg("chat", current_user.id, current_user.nickname, text, furl, fname, img)
+    av  = current_user.avatar if hasattr(current_user, "avatar") else ""
+    msg = make_msg("chat", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
     emit("new_message", {"room": room, "message": msg}, room=room)
@@ -608,15 +797,59 @@ def on_delete_message(data):
     room_msgs[room] = [m for m in msgs if m["id"] != mid]
     emit("message_deleted", {"room": room, "message_id": mid}, room=room)
 
+@socketio.on("react_message")
+def on_react_message(data):
+    room   = data.get("room","")
+    mid    = data.get("message_id","")
+    emoji  = (data.get("emoji") or "")[:4]
+    if not room or not mid or not emoji: return
+    msgs = room_msgs.get(room, [])
+    msg  = next((m for m in msgs if m["id"] == mid), None)
+    if not msg: return
+    reactions = msg.setdefault("reactions", {})
+    users = reactions.setdefault(emoji, [])
+    uid   = current_user.id
+    if uid in users:
+        users.remove(uid)
+        if not users: del reactions[emoji]
+    else:
+        users.append(uid)
+    emit("reaction_updated", {"room": room, "message_id": mid, "reactions": msg["reactions"]}, room=room)
+
+@socketio.on("send_group_message")
+def on_send_group_message(data):
+    gid   = data.get("group_id")
+    text  = (data.get("text") or "").strip()[:2000]
+    furl  = data.get("file_url",""); fname = data.get("file_name","")
+    img   = bool(data.get("is_image", False))
+    reply_to = data.get("reply_to", None)
+    if not gid or (not text and not furl): return
+    room = f"group_{gid}"
+    av   = current_user.avatar if hasattr(current_user, "avatar") else ""
+    msg  = make_msg("group", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
+    room_msgs.setdefault(room, []).append(msg)
+    if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
+    emit("group_message", {"group_id": gid, "room": room, "message": msg}, room=room)
+
+@socketio.on("join_group")
+def on_join_group(data):
+    gid = data.get("group_id")
+    if not gid: return
+    room = f"group_{gid}"
+    join_room(room)
+    emit("group_history", {"group_id": gid, "room": room, "messages": room_msgs.get(room, [])})
+
 @socketio.on("send_dm")
 def on_send_dm(data):
     to_id = data.get("to_id")
     text  = (data.get("text") or "").strip()[:2000]
     furl  = data.get("file_url",""); fname = data.get("file_name","")
     img   = bool(data.get("is_image", False))
+    reply_to = data.get("reply_to", None)
     if not to_id or (not text and not furl): return
     room = dm_room(current_user.id, to_id)
-    msg  = make_msg("dm", current_user.id, current_user.nickname, text, furl, fname, img)
+    av   = current_user.avatar if hasattr(current_user, "avatar") else ""
+    msg  = make_msg("dm", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
     join_room(room)
