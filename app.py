@@ -165,7 +165,16 @@ def send_push(user_id, title, body, url="/"):
                 )
                 print(f"[PUSH] Sent OK to {s['endpoint'][:60]}", flush=True)
             except Exception as e:
-                print(f"[PUSH] Error sending: {e}", flush=True)
+                err_str = str(e)
+                print(f"[PUSH] Error sending: {err_str}", flush=True)
+                if "410" in err_str or "unsubscribed" in err_str.lower():
+                    try:
+                        db2 = get_db()
+                        dbq(db2, "DELETE FROM push_subs WHERE endpoint=?", (s["endpoint"],))
+                        db2.commit(); db2.close()
+                        print(f"[PUSH] Removed expired subscription", flush=True)
+                    except Exception:
+                        pass
     except Exception as e:
         print(f"[PUSH] Fatal error: {e}", flush=True)
 
