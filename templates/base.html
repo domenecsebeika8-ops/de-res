@@ -60,7 +60,7 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
 .badge-user   { background: var(--bg3); color: var(--text2); }
 .badge-banned { background: rgba(248,113,113,.12); color: var(--red); }
 
-#pwa-banner {
+#pwa-banner, #notif-banner {
   display: none; position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   background: var(--accent); color: #fff; border-radius: 12px;
   padding: .7rem 1.2rem; font-size: .9rem; font-weight: 600;
@@ -69,8 +69,9 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
   animation: slideup .3s ease;
 }
 #pwa-banner.show { display: flex; }
+#notif-banner.show { display: flex; }
 @keyframes slideup { from { opacity:0; transform: translateX(-50%) translateY(20px); } }
-#pwa-banner .pwa-close {
+#pwa-banner .pwa-close, #notif-banner .notif-close {
   background: rgba(255,255,255,.2); border: none; color: #fff;
   border-radius: 50%; width: 22px; height: 22px; cursor: pointer;
   font-size: .8rem; display: flex; align-items: center; justify-content: center;
@@ -85,6 +86,11 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
   <button class="pwa-close" id="pwa-close">✕</button>
 </div>
 
+<div id="notif-banner">
+  🔔 Activar notificaciones
+  <button class="notif-close" id="notif-close">✕</button>
+</div>
+
 <script>
 const VAPID_PUBLIC_KEY = '{{ vapid_public_key }}';
 
@@ -95,11 +101,10 @@ function urlBase64ToUint8Array(base64String) {
   return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
 }
 
-async function setupPush(reg) {
-  if (!('PushManager' in window)) return;
+let swReg = null;
+
+async function doSubscribe(reg) {
   try {
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return;
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
@@ -109,12 +114,34 @@ async function setupPush(reg) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sub)
     });
-  } catch(e) { console.log('Push setup failed:', e); }
+    document.getElementById('notif-banner').classList.remove('show');
+    localStorage.setItem('notif_accepted', '1');
+  } catch(e) { console.log('Subscribe failed:', e); }
+}
+
+async function setupPush(reg) {
+  if (!('PushManager' in window) || !('Notification' in window)) return;
+  if (localStorage.getItem('notif_accepted')) {
+    // ya aceptó antes, re-suscribir silenciosamente si hace falta
+    const existing = await reg.pushManager.getSubscription();
+    if (!existing) await doSubscribe(reg);
+    return;
+  }
+  const perm = Notification.permission;
+  if (perm === 'granted') {
+    await doSubscribe(reg);
+  } else if (perm === 'default') {
+    // Mostrar banner para que el usuario haga clic (requerido por Chrome)
+    setTimeout(() => {
+      document.getElementById('notif-banner').classList.add('show');
+    }, 3000);
+  }
 }
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/static/sw.js').then(reg => {
-    setTimeout(() => setupPush(reg), 2000);
+    swReg = reg;
+    setTimeout(() => setupPush(reg), 1500);
   });
 }
 
@@ -140,6 +167,19 @@ document.getElementById('pwa-close').addEventListener('click', e => {
 
 window.addEventListener('appinstalled', () => {
   document.getElementById('pwa-banner').classList.remove('show');
+});
+
+document.getElementById('notif-banner').addEventListener('click', async () => {
+  if (!swReg) return;
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') await doSubscribe(swReg);
+  else document.getElementById('notif-banner').classList.remove('show');
+});
+
+document.getElementById('notif-close').addEventListener('click', e => {
+  e.stopPropagation();
+  document.getElementById('notif-banner').classList.remove('show');
+  localStorage.setItem('notif_accepted', 'dismissed');
 });
 </script>
 </body>
