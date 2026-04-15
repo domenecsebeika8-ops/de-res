@@ -2,10 +2,11 @@
 {% block title %}deúres{% endblock %}
 {% block extra_styles %}
 <style>
-html, body { overflow: hidden; }
+html, body { overflow: hidden; height: 100%; height: 100dvh; }
+* { -webkit-tap-highlight-color: transparent; }
 
 /* ── Layout ── */
-#app { display: flex; flex-direction: column; height: 100vh; }
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
 .topbar {
   display: flex; align-items: center; gap: .6rem;
