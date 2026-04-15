@@ -59,14 +59,60 @@ label { font-size: .78rem; color: var(--text2); display: block; margin: .9rem 0 
 .badge-admin  { background: rgba(108,99,255,.2); color: var(--accent2); }
 .badge-user   { background: var(--bg3); color: var(--text2); }
 .badge-banned { background: rgba(248,113,113,.12); color: var(--red); }
+
+#pwa-banner {
+  display: none; position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: #fff; border-radius: 12px;
+  padding: .7rem 1.2rem; font-size: .9rem; font-weight: 600;
+  box-shadow: 0 4px 20px rgba(108,99,255,.5); z-index: 999;
+  align-items: center; gap: .6rem; cursor: pointer; white-space: nowrap;
+  animation: slideup .3s ease;
+}
+#pwa-banner.show { display: flex; }
+@keyframes slideup { from { opacity:0; transform: translateX(-50%) translateY(20px); } }
+#pwa-banner .pwa-close {
+  background: rgba(255,255,255,.2); border: none; color: #fff;
+  border-radius: 50%; width: 22px; height: 22px; cursor: pointer;
+  font-size: .8rem; display: flex; align-items: center; justify-content: center;
+}
 </style>
 {% block extra_styles %}{% endblock %}
 </head>
 <body>{% block body %}{% endblock %}
+
+<div id="pwa-banner">
+  📲 Instalar deúres
+  <button class="pwa-close" id="pwa-close">✕</button>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/static/sw.js');
 }
+
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.getElementById('pwa-banner').classList.add('show');
+});
+
+document.getElementById('pwa-banner').addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  document.getElementById('pwa-banner').classList.remove('show');
+});
+
+document.getElementById('pwa-close').addEventListener('click', e => {
+  e.stopPropagation();
+  document.getElementById('pwa-banner').classList.remove('show');
+});
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('pwa-banner').classList.remove('show');
+});
 </script>
 </body>
 </html>
