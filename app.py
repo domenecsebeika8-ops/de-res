@@ -292,17 +292,23 @@ ALLOWED = {"png","jpg","jpeg","gif","webp","pdf","doc","docx","txt"}
 def allowed(fn):  return "." in fn and fn.rsplit(".",1)[1].lower() in ALLOWED
 def is_img(fn):   return fn.rsplit(".",1)[-1].lower() in {"png","jpg","jpeg","gif","webp"}
 
+MSG_LIMIT    = 60   # max messages kept per room in RAM (was 200)
 room_msgs    = {}
 room_users   = {}
 sid_rooms    = {}
 online_users = {}
 
 def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False, reply_to=None, avatar=""):
-    return {"id": str(uuid.uuid4()), "kind": kind, "user_id": uid,
-            "nickname": nick, "text": text, "file_url": furl,
-            "file_name": fname, "is_img": img, "avatar": avatar,
-            "reply_to": reply_to, "reactions": {},
-            "time": datetime.now().strftime("%H:%M")}
+    # Only include non-empty/non-default fields to minimize payload size (saves egress)
+    m = {"id": str(uuid.uuid4()), "kind": kind, "user_id": uid,
+         "nickname": nick, "time": datetime.now().strftime("%H:%M")}
+    if text:      m["text"]      = text
+    if furl:      m["file_url"]  = furl
+    if fname:     m["file_name"] = fname
+    if img:       m["is_img"]    = True
+    if avatar:    m["avatar"]    = avatar
+    if reply_to:  m["reply_to"]  = reply_to
+    return m
 
 def dm_room(a, b):
     return "dm_{}_{}".format(min(a,b), max(a,b))
@@ -454,7 +460,20 @@ def upload():
 @app.route("/uploads/<path:fn>")
 @login_required
 def serve_upload(fn):
-    return send_from_directory(UPLOAD_DIR, fn)
+    resp = send_from_directory(UPLOAD_DIR, fn)
+    resp.headers["Cache-Control"] = "private, max-age=2592000"  # 30 days
+    return resp
+
+@app.after_request
+def add_cache_headers(resp):
+    path = request.path
+    # Static assets: cache 7 days in browser — biggest egress saver
+    if path.startswith("/static/") or path in ("/sw.js", "/manifest.json"):
+        resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    # Friends list rarely changes — cache 30s client-side to avoid hammering
+    elif path == "/api/friends/list":
+        resp.headers["Cache-Control"] = "private, max-age=30"
+    return resp
 
 @app.route("/api/friends/search")
 @login_required
@@ -804,7 +823,7 @@ def on_send_message(data):
     av  = current_user.avatar if hasattr(current_user, "avatar") else ""
     msg = make_msg("chat", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
     room_msgs.setdefault(room, []).append(msg)
-    if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
+    if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     emit("new_message", {"room": room, "message": msg}, room=room)
     body = (text or "Archivo adjunto")[:80]
     online_in_room = room_users.get(room, set())
@@ -859,7 +878,7 @@ def on_send_group_message(data):
     av   = current_user.avatar if hasattr(current_user, "avatar") else ""
     msg  = make_msg("group", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
     room_msgs.setdefault(room, []).append(msg)
-    if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
+    if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     emit("group_message", {"group_id": gid, "room": room, "message": msg}, room=room)
 
 @socketio.on("join_group")
@@ -882,7 +901,7 @@ def on_send_dm(data):
     av   = current_user.avatar if hasattr(current_user, "avatar") else ""
     msg  = make_msg("dm", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
     room_msgs.setdefault(room, []).append(msg)
-    if len(room_msgs[room]) > 200: room_msgs[room] = room_msgs[room][-200:]
+    if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     join_room(room)
     emit("dm_message", {"room": room, "to_id": to_id, "message": msg}, room=room)
     socketio.emit("dm_message", {"room": room, "to_id": to_id, "message": msg},
