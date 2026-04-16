@@ -327,6 +327,7 @@ let friendsData = {};
 let pendingReqs = [];
 let replyTo   = null;
 let pickerMsgId = null;
+let tasksCache  = {};  // room_id → tasks array (cache to avoid re-fetching)
 let selectedAvatar = '{{ current_avatar or "" }}';
 const AVATARS = ['&#128512;','&#128513;','&#128514;','&#128516;','&#128522;','&#128525;','&#129321;','&#128526;','&#128528;','&#129300;','&#129488;','&#128536;','&#128540;','&#128544;','&#129296;','&#128079;','&#129351;','&#127881;','&#128293;','&#10024;','&#127775;','&#128170;','&#128081;','&#127926;','&#128007;','&#128049;','&#128021;','&#128053;','&#129409;','&#127946;','&#127947;','&#127939;','&#128104;&#8205;&#128187;','&#128105;&#8205;&#128187;','&#127752;'];
 const REACT_EMOJIS = ['&#128077;','&#10084;','&#128514;','&#128558;','&#128553;','&#128064;','&#127881;','&#128293;'];
@@ -342,8 +343,8 @@ window.addEventListener('DOMContentLoaded', () => {
   socket.on('connect', () => {
     socket.emit('join', { room: curRoom });
     highlight(curRoom);
-    // Refresh friends list on reconnect
-    loadFriends();
+    // Only reload friends if we don't have them yet (avoid flicker on reconnect)
+    if (!Object.keys(friendsData).length) loadFriends();
   });
 
   socket.on('history', data => {
@@ -466,38 +467,41 @@ function switchRoom(id, name, emoji) {
   leaveCurrentRoom();
   isDM = false; isGroup = false; dmTarget = null; curGroupId = null;
   curRoom = id; curName = name; curEmoji = emoji;
+  // Instant UI update — don't wait for server
   setHeader(name, emoji);
   document.getElementById('online-badge').style.display = '';
   highlight(id);
-  document.getElementById('msgs').innerHTML = '';
-  socket.emit('join', { room: id });
+  document.getElementById('msgs').innerHTML = '<div style="padding:1rem;color:var(--text2);font-size:.85rem;text-align:center">Cargando...</div>';
   loadTasks(id);
   closeSb();
+  socket.emit('join', { room: id });
 }
 function openDM(friend) {
   leaveCurrentRoom();
   isDM = true; isGroup = false; dmTarget = friend; curGroupId = null;
   curRoom = dmRoomId(USER_ID, friend.id);
+  // Instant UI update
   setDMHeader();
   highlight(null);
   document.querySelectorAll('.friend-btn').forEach(b => b.classList.remove('active'));
   const fb = document.getElementById('fb-' + friend.id); if (fb) fb.classList.add('active');
-  document.getElementById('msgs').innerHTML = '';
-  socket.emit('get_dm_history', { to_id: friend.id });
+  document.getElementById('msgs').innerHTML = '<div style="padding:1rem;color:var(--text2);font-size:.85rem;text-align:center">Cargando...</div>';
   loadTasks(curRoom);
   closeSb();
+  socket.emit('get_dm_history', { to_id: friend.id });
 }
 function switchGroup(gid, name, emoji) {
   leaveCurrentRoom();
   isGroup = true; isDM = false; dmTarget = null; curGroupId = gid;
   curRoom = 'group_' + gid;
+  // Instant UI update
   setHeader(name, emoji);
   document.getElementById('online-badge').style.display = 'none';
   highlightGroup(gid);
-  document.getElementById('msgs').innerHTML = '';
-  socket.emit('join_group', { group_id: gid });
+  document.getElementById('msgs').innerHTML = '<div style="padding:1rem;color:var(--text2);font-size:.85rem;text-align:center">Cargando...</div>';
   loadTasks('group_' + gid);
   closeSb();
+  socket.emit('join_group', { group_id: gid });
 }
 function leaveCurrentRoom() {
   if (!isGroup) socket.emit('leave', { room: curRoom });
@@ -700,10 +704,17 @@ function toggleTasksPanel() {
 }
 function loadTasks(roomId) {
   const list = document.getElementById('tasks-list'); list.innerHTML = '';
+  // Serve from cache instantly, then refresh in background
+  if (tasksCache[roomId]) {
+    tasksCache[roomId].forEach(t => renderTask(t));
+  }
   fetch('/api/tasks/' + encodeURIComponent(roomId)).then(r => r.json()).then(tasks => {
+    tasksCache[roomId] = tasks;
+    list.innerHTML = '';
     tasks.forEach(t => renderTask(t));
   });
 }
+function invalidateTasksCache(roomId) { delete tasksCache[roomId]; }
 function renderTask(t) {
   const list = document.getElementById('tasks-list');
   const div = document.createElement('div');
@@ -716,15 +727,28 @@ function addTask() {
   const inp = document.getElementById('task-input');
   const title = inp.value.trim(); if (!title) return;
   const roomId = isGroup ? 'group_' + curGroupId : curRoom;
+  inp.value = '';  // clear instantly (optimistic)
   fetch('/api/tasks/' + encodeURIComponent(roomId) + '/add', {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title})
-  }).then(r => r.json()).then(d => { if (d.ok) inp.value = ''; });
+  }).then(r => r.json()).then(d => { if (d.ok) invalidateTasksCache(roomId); });
 }
 function toggleTask(id) {
+  // Optimistic toggle: update UI immediately without waiting for server
+  const el = document.getElementById('task-' + id);
+  if (el) {
+    const done = !el.classList.contains('done');
+    el.classList.toggle('done', done);
+    const chk = el.querySelector('.task-check');
+    if (chk) { chk.classList.toggle('done', done); chk.textContent = done ? '\u2713' : ''; }
+  }
+  invalidateTasksCache(isGroup ? 'group_' + curGroupId : curRoom);
   fetch('/api/tasks/' + id + '/toggle', { method:'POST' });
 }
 function deleteTask(id) {
   if (!confirm('\u00bfEliminar tarea?')) return;
+  // Optimistic delete: remove from UI immediately
+  document.getElementById('task-' + id)?.remove();
+  invalidateTasksCache(isGroup ? 'group_' + curGroupId : curRoom);
   fetch('/api/tasks/' + id + '/delete', { method:'POST' });
 }
 

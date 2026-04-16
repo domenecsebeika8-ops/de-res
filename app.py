@@ -12,6 +12,11 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import (LoginManager, UserMixin, login_user,
                          logout_user, login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
+try:
+    from flask_compress import Compress as _Compress
+    _has_compress = True
+except ImportError:
+    _has_compress = False
 from werkzeug.utils import secure_filename
 import os, sys, uuid, threading, webbrowser, sqlite3
 from datetime import datetime
@@ -35,8 +40,23 @@ VAPID_CLAIMS  = {"sub": "mailto:admin@deures.app"}
 
 if DATABASE_URL:
     import psycopg2, psycopg2.extras
+    from psycopg2 import pool as pg_pool
+
+    # Connection pool: reuse connections instead of open/close per request
+    _pg_pool = pg_pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+
+    class _PooledConn:
+        """Wrapper that returns connection to pool on .close()"""
+        def __init__(self):
+            self._conn = _pg_pool.getconn()
+            self._conn.autocommit = False
+        def cursor(self, **kw):     return self._conn.cursor(**kw)
+        def commit(self):           self._conn.commit()
+        def rollback(self):         self._conn.rollback()
+        def close(self):            _pg_pool.putconn(self._conn)
+
     def get_db():
-        return psycopg2.connect(DATABASE_URL)
+        return _PooledConn()
     def dbq(db, sql, p=()):
         cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql.replace("?","%s"), p); return cur
@@ -65,6 +85,13 @@ app = Flask(__name__,
 app.config["SECRET_KEY"]         = "deures_2025_secret"
 app.config["UPLOAD_FOLDER"]      = UPLOAD_DIR
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+app.config["COMPRESS_MIMETYPES"] = [
+    "text/html","text/css","application/javascript","application/json","image/svg+xml"]
+app.config["COMPRESS_LEVEL"]     = 6
+app.config["COMPRESS_MIN_SIZE"]  = 500
+
+if _has_compress:
+    _Compress(app)
 
 async_mode    = "eventlet" if DATABASE_URL else "threading"
 socketio      = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
@@ -150,10 +177,14 @@ def init_db():
 
 init_db()
 
-def get_rooms():
-    db   = get_db()
-    rows = [dict(r) for r in dbq(db, "SELECT * FROM rooms ORDER BY created_at").fetchall()]
-    db.close(); return rows
+_rooms_cache = None  # rooms rarely change — cache in memory
+def get_rooms(invalidate=False):
+    global _rooms_cache
+    if _rooms_cache is None or invalidate:
+        db   = get_db()
+        _rooms_cache = [dict(r) for r in dbq(db, "SELECT * FROM rooms ORDER BY created_at").fetchall()]
+        db.close()
+    return _rooms_cache
 
 def get_friends(user_id):
     db = get_db()
@@ -746,7 +777,7 @@ def on_join(data):
     join_room(room)
     sid_rooms.setdefault(sid, set()).add(room)
     room_users.setdefault(room, set()).add(uid)
-    emit("history", {"room": room, "messages": room_msgs.get(room, [])})
+    emit("history", {"room": room, "messages": room_msgs.get(room, [])[-50:]})
     emit("user_joined", {"user_id": uid, "nickname": current_user.nickname,
                          "count": len(room_users[room])}, room=room)
 
@@ -837,7 +868,7 @@ def on_join_group(data):
     if not gid: return
     room = f"group_{gid}"
     join_room(room)
-    emit("group_history", {"group_id": gid, "room": room, "messages": room_msgs.get(room, [])})
+    emit("group_history", {"group_id": gid, "room": room, "messages": room_msgs.get(room, [])[-50:]})
 
 @socketio.on("send_dm")
 def on_send_dm(data):
@@ -867,7 +898,7 @@ def on_get_dm_history(data):
     if not to_id: return
     room = dm_room(current_user.id, to_id)
     join_room(room)
-    emit("dm_history", {"room": room, "to_id": to_id, "messages": room_msgs.get(room, [])})
+    emit("dm_history", {"room": room, "to_id": to_id, "messages": room_msgs.get(room, [])[-50:]})
 
 def open_browser():
     import time; time.sleep(1.2)
