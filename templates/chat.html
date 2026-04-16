@@ -250,7 +250,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
       <button class="ic-btn attach" onclick="document.getElementById('file-input').click()">&#128206;</button>
       <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt" onchange="fileSelected(event)">
       <textarea id="msg-input" placeholder="Escribe un mensaje..." rows="1"
-        onkeydown="if(event.key==='Enter'&&\!event.shiftKey){event.preventDefault();sendMsg();}"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"
         oninput="autoH(this)"></textarea>
       <button class="ic-btn send" onclick="sendMsg()">&#10148;</button>
     </div>
@@ -260,7 +260,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
 <div id="lb" onclick="closeLb()"><img id="lb-img" src="" alt=""></div>
 <div id="react-picker" class="react-picker" style="display:none"></div>
 
-<\!-- Modal buscar amigo -->
+<!-- Modal buscar amigo -->
 <div class="modal-overlay" id="search-modal">
   <div class="modal-box">
     <h3>&#128269; Añadir amigo</h3>
@@ -270,7 +270,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
   </div>
 </div>
 
-<\!-- Modal solicitudes -->
+<!-- Modal solicitudes -->
 <div class="modal-overlay" id="pending-modal">
   <div class="modal-box">
     <h3>&#128101; Solicitudes de amistad</h3>
@@ -279,7 +279,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
   </div>
 </div>
 
-<\!-- Modal avatar -->
+<!-- Modal avatar -->
 <div class="modal-overlay" id="avatar-modal">
   <div class="modal-box">
     <h3>&#128100; Elige tu avatar</h3>
@@ -291,7 +291,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
   </div>
 </div>
 
-<\!-- Modal crear grupo -->
+<!-- Modal crear grupo -->
 <div class="modal-overlay" id="create-group-modal">
   <div class="modal-box">
     <h3>&#128101; Crear grupo</h3>
@@ -332,13 +332,18 @@ const AVATARS = ['&#128512;','&#128513;','&#128514;','&#128516;','&#128522;','&#
 const REACT_EMOJIS = ['&#128077;','&#10084;','&#128514;','&#128558;','&#128553;','&#128064;','&#127881;','&#128293;'];
 
 window.addEventListener('DOMContentLoaded', () => {
+  // Load sidebar data immediately (don't wait for socket)
+  loadFriends();
+  loadPending();
+  loadTasks(curRoom);
+
   socket = io({ transports: ['websocket','polling'] });
 
   socket.on('connect', () => {
     socket.emit('join', { room: curRoom });
     highlight(curRoom);
+    // Refresh friends list on reconnect
     loadFriends();
-    loadPending();
   });
 
   socket.on('history', data => {
@@ -348,7 +353,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('new_message', data => {
-    if (data.room === curRoom && \!isDM && \!isGroup) { appendMsg(data.message); scrollBot(); }
+    if (data.room === curRoom && !isDM && !isGroup) { appendMsg(data.message); scrollBot(); }
   });
 
   socket.on('message_deleted', data => {
@@ -360,22 +365,22 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('user_joined', data => {
-    if (\!isDM && \!isGroup) document.getElementById('online-n').textContent = data.count || '';
+    if (!isDM && !isGroup) document.getElementById('online-n').textContent = data.count || '';
   });
   socket.on('user_left', data => {
-    if (\!isDM && \!isGroup) document.getElementById('online-n').textContent = data.count || '';
+    if (!isDM && !isGroup) document.getElementById('online-n').textContent = data.count || '';
   });
 
   socket.on('room_created', r => addRoomBtn(r));
   socket.on('room_renamed', r => {
     const btn = document.getElementById('rb-' + r.id);
     if (btn) btn.innerHTML = '<span class="remi">' + r.emoji + '</span>' + r.name;
-    if (r.id === curRoom && \!isDM && \!isGroup) setHeader(r.name, r.emoji);
+    if (r.id === curRoom && !isDM && !isGroup) setHeader(r.name, r.emoji);
   });
   socket.on('room_deleted', r => {
     const btn = document.getElementById('rb-' + r.id);
     if (btn) btn.remove();
-    if (r.id === curRoom && \!isDM && \!isGroup) switchRoom('general','General','\ud83d\udcac');
+    if (r.id === curRoom && !isDM && !isGroup) switchRoom('general','General','\ud83d\udcac');
   });
 
   socket.on('friend_request', data => {
@@ -417,7 +422,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   socket.on('task_updated', data => {
     const el = document.getElementById('task-' + data.id);
-    if (el) { el.classList.toggle('done', \!\!data.done); const chk = el.querySelector('.task-check'); if (chk) { chk.classList.toggle('done', \!\!data.done); chk.textContent = data.done ? '\u2713' : ''; } }
+    if (el) { el.classList.toggle('done', !!data.done); const chk = el.querySelector('.task-check'); if (chk) { chk.classList.toggle('done', !!data.done); chk.textContent = data.done ? '\u2713' : ''; } }
   });
   socket.on('task_deleted', data => {
     const el = document.getElementById('task-' + data.id); if (el) el.remove();
@@ -438,7 +443,7 @@ function loadPending() {
 function renderFriendsList() {
   const c = document.getElementById('friends-list'); c.innerHTML = '';
   const friends = Object.values(friendsData).sort((a,b) => (b.online?1:0)-(a.online?1:0));
-  if (\!friends.length) { c.innerHTML = '<div style="padding:.4rem .7rem;font-size:.78rem;color:var(--text2)">Sin amigos aun</div>'; return; }
+  if (!friends.length) { c.innerHTML = '<div style="padding:.4rem .7rem;font-size:.78rem;color:var(--text2)">Sin amigos aun</div>'; return; }
   friends.forEach(f => {
     const btn = document.createElement('button');
     btn.className = 'friend-btn' + (isDM && dmTarget && dmTarget.id === f.id ? ' active' : '');
@@ -457,7 +462,7 @@ function dmRoomId(a, b) { return 'dm_' + Math.min(a,b) + '_' + Math.max(a,b); }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 function switchRoom(id, name, emoji) {
-  if (\!isDM && \!isGroup && id === curRoom) { closeSb(); return; }
+  if (!isDM && !isGroup && id === curRoom) { closeSb(); return; }
   leaveCurrentRoom();
   isDM = false; isGroup = false; dmTarget = null; curGroupId = null;
   curRoom = id; curName = name; curEmoji = emoji;
@@ -495,7 +500,7 @@ function switchGroup(gid, name, emoji) {
   closeSb();
 }
 function leaveCurrentRoom() {
-  if (\!isGroup) socket.emit('leave', { room: curRoom });
+  if (!isGroup) socket.emit('leave', { room: curRoom });
 }
 function setDMHeader() {
   const online = dmTarget && dmTarget.online;
@@ -551,7 +556,7 @@ function appendMsg(msg) {
     div.className = 'msg ' + (isMe ? 'me' : 'other');
     const av = msg.avatar || '';
     let inner = '';
-    if (\!isMe) inner += '<div class="nick">' + (av ? '<span style="margin-right:.3rem">' + av + '</span>' : '') + esc(msg.nickname) + '</div>';
+    if (!isMe) inner += '<div class="nick">' + (av ? '<span style="margin-right:.3rem">' + av + '</span>' : '') + esc(msg.nickname) + '</div>';
     inner += '<div class="bubble-row">';
     if ((IS_ADMIN || isMe)) inner += '<button class="del-btn" onclick="deleteMsg(\'' + msg.id + '\')">&#128465;</button>';
     inner += '<button class="reply-btn" onclick="setReply(\'' + msg.id + '\',\'' + esc(msg.nickname||'') + '\',\'' + esc((msg.text||'').substring(0,60).replace(/'/g,"&#39;")) + '\')">&#8617;</button>';
@@ -581,7 +586,7 @@ function appendMsg(msg) {
 }
 
 function renderReactions(msgId, reactions) {
-  const rc = document.getElementById('rc-' + msgId); if (\!rc) return;
+  const rc = document.getElementById('rc-' + msgId); if (!rc) return;
   rc.innerHTML = '';
   if (reactions) {
     Object.entries(reactions).forEach(([em, users]) => {
@@ -600,7 +605,7 @@ function renderReactions(msgId, reactions) {
 }
 
 function deleteMsg(id) {
-  if (\!confirm('\u00bfEliminar este mensaje?')) return;
+  if (!confirm('\u00bfEliminar este mensaje?')) return;
   socket.emit('delete_message', { room: curRoom, message_id: id });
 }
 function scrollBot() { const w = document.getElementById('msgs'); w.scrollTop = w.scrollHeight; }
@@ -627,7 +632,7 @@ function sendReact(msgId, emoji) {
   socket.emit('react_message', { room: curRoom, message_id: msgId, emoji: emoji });
   closePicker();
 }
-document.addEventListener('click', e => { if (\!e.target.closest('.react-add') && \!e.target.closest('#react-picker')) closePicker(); });
+document.addEventListener('click', e => { if (!e.target.closest('.react-add') && !e.target.closest('#react-picker')) closePicker(); });
 
 // ── Reply ─────────────────────────────────────────────────────────────────────
 function setReply(msgId, nick, text) {
@@ -646,7 +651,7 @@ function cancelReply() {
 function sendMsg() {
   const inp = document.getElementById('msg-input');
   const text = inp.value.trim();
-  if (\!text && \!pendingFile) return;
+  if (!text && !pendingFile) return;
   if (pendingFile) { uploadThenSend(text); return; }
   const payload = { text, reply_to: replyTo };
   if (isDM && dmTarget) socket.emit('send_dm', { to_id: dmTarget.id, ...payload });
@@ -657,7 +662,7 @@ function sendMsg() {
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 function fileSelected(e) {
-  const f = e.target.files[0]; if (\!f) return;
+  const f = e.target.files[0]; if (!f) return;
   pendingFile = f;
   document.getElementById('fp-name').textContent = f.name;
   document.getElementById('fp').classList.add('show');
@@ -709,7 +714,7 @@ function renderTask(t) {
 }
 function addTask() {
   const inp = document.getElementById('task-input');
-  const title = inp.value.trim(); if (\!title) return;
+  const title = inp.value.trim(); if (!title) return;
   const roomId = isGroup ? 'group_' + curGroupId : curRoom;
   fetch('/api/tasks/' + encodeURIComponent(roomId) + '/add', {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title})
@@ -719,7 +724,7 @@ function toggleTask(id) {
   fetch('/api/tasks/' + id + '/toggle', { method:'POST' });
 }
 function deleteTask(id) {
-  if (\!confirm('\u00bfEliminar tarea?')) return;
+  if (!confirm('\u00bfEliminar tarea?')) return;
   fetch('/api/tasks/' + id + '/delete', { method:'POST' });
 }
 
@@ -761,7 +766,7 @@ function closeCreateGroupModal() { document.getElementById('create-group-modal')
 function createGroup() {
   const name = document.getElementById('grp-name').value.trim();
   const emoji = document.getElementById('grp-emoji').value.trim() || '\ud83d\udc65';
-  if (\!name) { alert('Escribe un nombre'); return; }
+  if (!name) { alert('Escribe un nombre'); return; }
   const members = [...document.querySelectorAll('#grp-friends input:checked')].map(x => parseInt(x.value));
   fetch('/api/groups/create', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -782,9 +787,9 @@ function searchFriends() {
     if (q.length < 2) { document.getElementById('search-results').innerHTML=''; return; }
     fetch('/api/friends/search?q=' + encodeURIComponent(q)).then(r => r.json()).then(results => {
       const c = document.getElementById('search-results'); c.innerHTML='';
-      if (\!results.length) { c.innerHTML='<div style="font-size:.82rem;color:var(--text2);padding:.3rem .5rem">Sin resultados</div>'; return; }
+      if (!results.length) { c.innerHTML='<div style="font-size:.82rem;color:var(--text2);padding:.3rem .5rem">Sin resultados</div>'; return; }
       results.forEach(u => {
-        const alreadyFriend = \!\!friendsData[u.id];
+        const alreadyFriend = !!friendsData[u.id];
         const div = document.createElement('div'); div.className='search-result';
         div.innerHTML='<span style="flex:1">' + esc(u.nickname) + '</span><button class="btn btn-primary btn-sm" ' + (alreadyFriend?'disabled':'') + ' onclick="sendRequest(' + u.id + ',this)">' + (alreadyFriend?'\u2705 Amigos':'+ A\u00f1adir') + '</button>';
         c.appendChild(div);
@@ -803,7 +808,7 @@ function openPendingModal() { renderPendingList(); document.getElementById('pend
 function closePendingModal() { document.getElementById('pending-modal').classList.remove('open'); }
 function renderPendingList() {
   const c = document.getElementById('pending-list'); c.innerHTML='';
-  if (\!pendingReqs.length) { c.innerHTML='<div style="font-size:.85rem;color:var(--text2)">No hay solicitudes.</div>'; return; }
+  if (!pendingReqs.length) { c.innerHTML='<div style="font-size:.85rem;color:var(--text2)">No hay solicitudes.</div>'; return; }
   pendingReqs.forEach(req => {
     const div = document.createElement('div'); div.className='pending-item'; div.id='pr-'+req.from_id;
     div.innerHTML='<span class="pi-nick">' + esc(req.from_nick) + '</span><div class="pending-btns"><button class="btn btn-primary btn-sm" onclick="acceptReq(' + req.from_id + ')">\u2705 Aceptar</button><button class="btn btn-ghost btn-sm" onclick="declineReq(' + req.from_id + ')">\u2715</button></div>';
@@ -812,12 +817,12 @@ function renderPendingList() {
 }
 function acceptReq(uid) {
   fetch('/api/friends/accept/' + uid, {method:'POST'}).then(r => r.json()).then(d => {
-    if (d.ok) { pendingReqs=pendingReqs.filter(r=>r.from_id\!==uid); updatePendingBadge(); document.getElementById('pr-'+uid)?.remove(); loadFriends(); }
+    if (d.ok) { pendingReqs=pendingReqs.filter(r=>r.from_id!==uid); updatePendingBadge(); document.getElementById('pr-'+uid)?.remove(); loadFriends(); }
   });
 }
 function declineReq(uid) {
   fetch('/api/friends/decline/' + uid, {method:'POST'}).then(r => r.json()).then(d => {
-    if (d.ok) { pendingReqs=pendingReqs.filter(r=>r.from_id\!==uid); updatePendingBadge(); document.getElementById('pr-'+uid)?.remove(); }
+    if (d.ok) { pendingReqs=pendingReqs.filter(r=>r.from_id!==uid); updatePendingBadge(); document.getElementById('pr-'+uid)?.remove(); }
   });
 }
 
