@@ -143,7 +143,7 @@ def init_db():
         dbq(db, "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
         db.commit()
     except Exception:
-        pass
+        db.rollback()  # IMPORTANT: rollback on PostgreSQL or transaction stays broken
     if dbscalar(db, "SELECT COUNT(*) FROM rooms") == 0:
         dbmany(db, "INSERT INTO rooms (id,name,emoji) VALUES (?,?,?)", DEFAULT_ROOMS)
     db.commit(); db.close()
