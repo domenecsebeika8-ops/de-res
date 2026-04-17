@@ -99,13 +99,21 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
 .tasks-list { flex: 1; overflow-y: auto; padding: .5rem; display: flex; flex-direction: column; gap: .3rem; }
 .task-item { display: flex; align-items: flex-start; gap: .45rem; padding: .45rem .6rem; background: var(--bg3); border-radius: 9px; border: 1px solid var(--border); }
 .task-item.done .task-title { text-decoration: line-through; color: var(--text2); }
+.task-item.due-overdue { border-color: rgba(255,80,80,.5); background: rgba(255,80,80,.07); }
+.task-item.due-today    { border-color: rgba(255,160,0,.5);  background: rgba(255,160,0,.07); }
+.task-item.due-soon     { border-color: rgba(255,210,0,.4);  background: rgba(255,210,0,.05); }
 .task-check { width: 16px; height: 16px; border-radius: 4px; border: 2px solid var(--border); flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-top: 2px; font-size: .65rem; }
 .task-check.done { background: var(--green); border-color: var(--green); color: #fff; }
 .task-title { flex: 1; font-size: .85rem; line-height: 1.35; }
+.task-due { font-size: .72rem; color: var(--text2); white-space: nowrap; margin-top: 1px; }
+.task-due.overdue { color: #ff5050; font-weight: 600; }
+.task-due.today   { color: #ffa000; font-weight: 600; }
+.task-due.soon    { color: #c8b400; }
 .task-del { background: none; border: none; cursor: pointer; color: var(--text2); font-size: .8rem; padding: .1rem; opacity: .4; }
 .task-del:hover { opacity: 1; color: var(--red); }
-.tasks-add { padding: .5rem; border-top: 1px solid var(--border); display: flex; gap: .35rem; flex-shrink: 0; }
-.tasks-add input { flex: 1; font-size: .83rem; padding: .4rem .65rem; }
+.tasks-add { padding: .5rem; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: .35rem; flex-shrink: 0; }
+.tasks-add input[type=text] { flex: 1; min-width: 0; font-size: .83rem; padding: .4rem .65rem; }
+.tasks-add input[type=date] { font-size: .78rem; padding: .38rem .5rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; color: var(--text); width: 130px; }
 
 /* input */
 .input-area { background: var(--bg2); border-top: 1px solid var(--border); padding: .55rem .7rem; flex-shrink: 0; }
@@ -229,6 +237,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
         <div class="tasks-add">
           <input type="text" id="task-input" placeholder="Nueva tarea..."
             onkeydown="if(event.key==='Enter') addTask()">
+          <input type="date" id="task-due" title="Fecha de entrega">
           <button class="btn btn-primary btn-sm" onclick="addTask()">+</button>
         </div>
       </div>
@@ -251,7 +260,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
       <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt" onchange="fileSelected(event)">
       <textarea id="msg-input" placeholder="Escribe un mensaje..." rows="1"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"
-        oninput="autoH(this)"></textarea>
+        oninput="autoH(this);p2pTyping()"></textarea>
       <button class="ic-btn send" onclick="sendMsg()">&#10148;</button>
     </div>
   </div>
@@ -309,12 +318,14 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="/static/rtc.js"></script>
 <script>
 const NICK     = {{ user.nickname | tojson }};
 const IS_ADMIN = {{ user.is_admin | tojson }};
 const USER_ID  = {{ user.id }};
 
 let socket;
+let p2p = null;  // P2PRoom instance — null until socket connects
 let curRoom   = 'general';
 let curName   = 'General';
 let curEmoji  = '\ud83d\udcac';
@@ -341,9 +352,40 @@ window.addEventListener('DOMContentLoaded', () => {
   socket = io({ transports: ['websocket','polling'] });
 
   socket.on('connect', () => {
+    // Init P2P (one instance per session, handles all rooms)
+    if (!p2p) {
+      p2p = new P2PRoom(socket, USER_ID, NICK);
+      p2p.onMessage = msg => { appendMsg(msg); scrollBot(); };
+      p2p.onHistory = msgs => {
+        // History from host via P2P — only render if msgs area is empty/loading
+        const el = document.getElementById('msgs');
+        if (!el.querySelector('.msg')) {
+          el.innerHTML = '';
+          msgs.forEach(m => appendMsg(m));
+          scrollBot();
+        }
+      };
+      p2p.onHostChange = isHost => {
+        // Proceso silencioso — solo log en consola
+        console.log('[P2P] Rol:', isHost ? 'host' : 'peer');
+      };
+      p2p.onTyping = (nickname, active) => {
+        let tip = document.getElementById('typing-tip');
+        if (!tip) {
+          tip = document.createElement('div');
+          tip.id = 'typing-tip';
+          tip.style.cssText = 'padding:.2rem 1rem;font-size:.75rem;color:var(--text2);height:1.4rem';
+          document.getElementById('msgs').after(tip);
+        }
+        if (active) {
+          tip.textContent = nickname + ' está escribiendo...';
+        } else {
+          tip.textContent = '';
+        }
+      };
+    }
     socket.emit('join', { room: curRoom });
     highlight(curRoom);
-    // Only reload friends if we don't have them yet (avoid flicker on reconnect)
     if (!Object.keys(friendsData).length) loadFriends();
   });
 
@@ -505,6 +547,7 @@ function switchGroup(gid, name, emoji) {
 }
 function leaveCurrentRoom() {
   if (!isGroup) socket.emit('leave', { room: curRoom });
+  if (p2p) p2p.leave();
 }
 function setDMHeader() {
   const online = dmTarget && dmTarget.online;
@@ -615,6 +658,15 @@ function deleteMsg(id) {
 function scrollBot() { const w = document.getElementById('msgs'); w.scrollTop = w.scrollHeight; }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+let _typingThrottle = 0;
+function p2pTyping() {
+  // Throttle: send at most once per second
+  if (p2p && !isDM && !isGroup && Date.now() - _typingThrottle > 1000) {
+    _typingThrottle = Date.now();
+    p2p.sendTyping();
+  }
+}
+
 // ── Reactions ─────────────────────────────────────────────────────────────────
 function openReactPicker(e, msgId) {
   e.stopPropagation();
@@ -658,10 +710,26 @@ function sendMsg() {
   if (!text && !pendingFile) return;
   if (pendingFile) { uploadThenSend(text); return; }
   const payload = { text, reply_to: replyTo };
+  inp.value = ''; autoH(inp); cancelReply();
+
+  // P2P: solo para mensajes de sala (no DM ni grupos — van por Railway)
+  if (!isDM && !isGroup && p2p && p2p.room === curRoom) {
+    const av = selectedAvatar || '';
+    const msgData = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      kind: 'chat', user_id: USER_ID, nickname: NICK,
+      time: new Date().toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'}),
+      avatar: av || undefined, text: text || undefined,
+      reply_to: replyTo || undefined
+    };
+    // Try P2P — if nobody else is connected, falls through to Railway
+    if (p2p.sendMessage(msgData)) return;
+  }
+
+  // Fallback: Railway (DMs, grupos, o si P2P no está listo)
   if (isDM && dmTarget) socket.emit('send_dm', { to_id: dmTarget.id, ...payload });
   else if (isGroup && curGroupId) socket.emit('send_group_message', { group_id: curGroupId, ...payload });
   else socket.emit('send_message', { room: curRoom, ...payload });
-  inp.value = ''; autoH(inp); cancelReply();
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────
@@ -709,6 +777,14 @@ function loadTasks(roomId) {
     tasksCache[roomId].forEach(t => renderTask(t));
   }
   fetch('/api/tasks/' + encodeURIComponent(roomId)).then(r => r.json()).then(tasks => {
+    // Sort: pendientes primero ordenados por urgencia, luego hechas
+    tasks.sort((a, b) => {
+      if (a.done !== b.done) return a.done - b.done;
+      if (!a.due_date && !b.due_date) return 0;
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      return a.due_date.localeCompare(b.due_date);
+    });
     tasksCache[roomId] = tasks;
     list.innerHTML = '';
     tasks.forEach(t => renderTask(t));
@@ -717,19 +793,49 @@ function loadTasks(roomId) {
 function invalidateTasksCache(roomId) { delete tasksCache[roomId]; }
 function renderTask(t) {
   const list = document.getElementById('tasks-list');
+  const urgency = t.done ? '' : dueUrgency(t.due_date);
   const div = document.createElement('div');
-  div.className = 'task-item' + (t.done ? ' done' : '');
+  div.className = 'task-item' + (t.done ? ' done' : '') + (urgency ? ' due-' + urgency : '');
   div.id = 'task-' + t.id;
-  div.innerHTML = '<div class="task-check' + (t.done?' done':'') + '" onclick="toggleTask(' + t.id + ')">' + (t.done?'\u2713':'') + '</div><span class="task-title">' + esc(t.title) + '</span><button class="task-del" onclick="deleteTask(' + t.id + ')">&#10005;</button>';
+  const dueHtml = t.due_date
+    ? '<span class="task-due' + (urgency ? ' ' + urgency : '') + '">' + dueLabel(t.due_date) + '</span>'
+    : '';
+  div.innerHTML =
+    '<div class="task-check' + (t.done?' done':'') + '" onclick="toggleTask(' + t.id + ')">' + (t.done?'\u2713':'') + '</div>' +
+    '<div style="flex:1;min-width:0"><span class="task-title">' + esc(t.title) + '</span>' + (dueHtml ? '<br>' + dueHtml : '') + '</div>' +
+    '<button class="task-del" onclick="deleteTask(' + t.id + ')">&#10005;</button>';
   list.appendChild(div);
+}
+function dueUrgency(due) {
+  if (!due) return '';
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(due + 'T00:00:00');
+  const diff = Math.round((d - today) / 86400000);
+  if (diff < 0)  return 'overdue';
+  if (diff === 0) return 'today';
+  if (diff <= 2)  return 'soon';
+  return '';
+}
+function dueLabel(due) {
+  if (!due) return '';
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(due + 'T00:00:00');
+  const diff = Math.round((d - today) / 86400000);
+  if (diff < 0)   return '\u26a0\ufe0f Vencido hace ' + Math.abs(diff) + ' d\u00eda' + (Math.abs(diff)>1?'s':'');
+  if (diff === 0) return '\u23f0 Hoy';
+  if (diff === 1) return '\u23f3 Ma\u00f1ana';
+  return '\ud83d\udcc5 ' + d.toLocaleDateString('es', {day:'numeric', month:'short'});
 }
 function addTask() {
   const inp = document.getElementById('task-input');
+  const due = document.getElementById('task-due');
   const title = inp.value.trim(); if (!title) return;
   const roomId = isGroup ? 'group_' + curGroupId : curRoom;
-  inp.value = '';  // clear instantly (optimistic)
+  const due_date = due.value || null;
+  inp.value = ''; due.value = '';
   fetch('/api/tasks/' + encodeURIComponent(roomId) + '/add', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title})
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({title, due_date})
   }).then(r => r.json()).then(d => { if (d.ok) invalidateTasksCache(roomId); });
 }
 function toggleTask(id) {

@@ -170,7 +170,12 @@ def init_db():
         dbq(db, "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
         db.commit()
     except Exception:
-        db.rollback()  # IMPORTANT: rollback on PostgreSQL or transaction stays broken
+        db.rollback()
+    try:
+        dbq(db, "ALTER TABLE tasks ADD COLUMN due_date TEXT DEFAULT NULL")
+        db.commit()
+    except Exception:
+        db.rollback()
     if dbscalar(db, "SELECT COUNT(*) FROM rooms") == 0:
         dbmany(db, "INSERT INTO rooms (id,name,emoji) VALUES (?,?,?)", DEFAULT_ROOMS)
     db.commit(); db.close()
@@ -292,11 +297,14 @@ ALLOWED = {"png","jpg","jpeg","gif","webp","pdf","doc","docx","txt"}
 def allowed(fn):  return "." in fn and fn.rsplit(".",1)[1].lower() in ALLOWED
 def is_img(fn):   return fn.rsplit(".",1)[-1].lower() in {"png","jpg","jpeg","gif","webp"}
 
-MSG_LIMIT    = 60   # max messages kept per room in RAM (was 200)
+MSG_LIMIT    = 60
 room_msgs    = {}
 room_users   = {}
 sid_rooms    = {}
 online_users = {}
+room_sids    = {}   # room → {sid: {uid, nickname, join_order}}
+room_host    = {}   # room → host_sid
+_join_counter = 0   # global counter for join order
 
 def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False, reply_to=None, avatar=""):
     # Only include non-empty/non-default fields to minimize payload size (saves egress)
@@ -718,17 +726,19 @@ def api_tasks(room_id):
 @app.route("/api/tasks/<room_id>/add", methods=["POST"])
 @login_required
 def api_task_add(room_id):
-    data  = request.get_json()
-    title = (data.get("title") or "").strip()[:200]
+    data     = request.get_json()
+    title    = (data.get("title") or "").strip()[:200]
+    due_date = (data.get("due_date") or "").strip()[:10] or None  # YYYY-MM-DD
     if not title: return jsonify({"error": "Titulo vacio"}), 400
     db = get_db()
-    dbq(db, "INSERT INTO tasks (room_id, title, created_by) VALUES (?,?,?)",
-        (room_id, title, current_user.id))
+    dbq(db, "INSERT INTO tasks (room_id, title, due_date, created_by) VALUES (?,?,?,?)",
+        (room_id, title, due_date, current_user.id))
     db.commit()
-    tid  = dbscalar(db, "SELECT id FROM tasks WHERE room_id=? AND created_by=? ORDER BY created_at DESC LIMIT 1",
-                    (room_id, current_user.id))
+    tid = dbscalar(db, "SELECT id FROM tasks WHERE room_id=? AND created_by=? ORDER BY created_at DESC LIMIT 1",
+                   (room_id, current_user.id))
     db.close()
-    task = {"id": tid, "room_id": room_id, "title": title, "done": 0, "created_by": current_user.id}
+    task = {"id": tid, "room_id": room_id, "title": title, "done": 0,
+            "due_date": due_date, "created_by": current_user.id}
     socketio.emit("task_added", {"room_id": room_id, "task": task}, room=room_id)
     return jsonify({"ok": True, "task": task})
 
@@ -787,15 +797,48 @@ def on_disconnect():
             room_users[room].discard(uid)
             emit("user_left", {"user_id": uid, "nickname": current_user.nickname,
                                "count": len(room_users[room])}, room=room)
+        # P2P cleanup
+        if room in room_sids:
+            room_sids[room].pop(sid, None)
+        if room_host.get(room) == sid:
+            del room_host[room]
+        socketio.emit("peer_left", {"sid": sid}, room=room)
 
 @socketio.on("join")
 def on_join(data):
+    global _join_counter
     room = data.get("room","")
     if not room: return
     sid = request.sid; uid = current_user.id
     join_room(room)
     sid_rooms.setdefault(sid, set()).add(room)
     room_users.setdefault(room, set()).add(uid)
+
+    # P2P: track sid and assign join order
+    _join_counter += 1
+    existing = room_sids.get(room, {})
+    is_first = len(existing) == 0
+    room_sids.setdefault(room, {})[sid] = {
+        "uid": uid, "nickname": current_user.nickname, "join_order": _join_counter
+    }
+    current_host = room_host.get(room)
+    if is_first:
+        room_host[room] = sid
+        current_host = sid
+
+    # Tell new joiner who's already in the room (for WebRTC)
+    emit("room_peers", {
+        "room": room,
+        "peers": [{"sid": s, **info} for s, info in existing.items()],
+        "host_sid": current_host,
+        "is_temp_host": is_first
+    })
+    # Tell existing peers about the new joiner
+    emit("peer_joined", {"sid": sid, "uid": uid,
+                         "nickname": current_user.nickname,
+                         "join_order": _join_counter},
+         room=room, include_self=False)
+
     emit("history", {"room": room, "messages": room_msgs.get(room, [])[-50:]})
     emit("user_joined", {"user_id": uid, "nickname": current_user.nickname,
                          "count": len(room_users[room])}, room=room)
@@ -905,10 +948,10 @@ def on_send_dm(data):
     join_room(room)
     emit("dm_message", {"room": room, "to_id": to_id, "message": msg}, room=room)
     socketio.emit("dm_message", {"room": room, "to_id": to_id, "message": msg},
-                  room=f"user_{to_id}")
+                  room="user_{}".format(to_id))
     body = (text or "Archivo adjunto")[:80]
     threading.Thread(target=send_push, args=(
-        to_id, f"Mensaje de {current_user.nickname}", body, "/"
+        to_id, "Mensaje de {}".format(current_user.nickname), body, "/"
     ), daemon=True).start()
 
 @socketio.on("get_dm_history")
@@ -918,6 +961,29 @@ def on_get_dm_history(data):
     room = dm_room(current_user.id, to_id)
     join_room(room)
     emit("dm_history", {"room": room, "to_id": to_id, "messages": room_msgs.get(room, [])[-50:]})
+
+@socketio.on("rtc_signal")
+def on_rtc_signal(data):
+    target = data.get("to")
+    if not target: return
+    emit("rtc_signal", {"from": request.sid, "type": data.get("type"),
+                        "sdp": data.get("sdp"), "candidate": data.get("candidate")},
+         room=target)
+
+@socketio.on("rtc_host_elected")
+def on_rtc_host_elected(data):
+    room = data.get("room")
+    host_sid = data.get("host_sid")
+    if room and host_sid:
+        room_host[room] = host_sid
+        emit("rtc_host_elected", {"host_sid": host_sid}, room=room)
+
+@socketio.on("rtc_benchmark_result")
+def on_rtc_benchmark_result(data):
+    room = data.get("room")
+    host = room_host.get(room)
+    if host:
+        emit("rtc_benchmark_result", data, room=host)
 
 def open_browser():
     import time; time.sleep(1.2)
