@@ -190,7 +190,7 @@ html, body { overflow: hidden; height: 100%; height: 100dvh; }
         <span class="notif-dot" id="req-dot"></span>
       </button>
       {% if user.is_admin %}
-      <button class="topbar-btn admin" onclick="location.href='/admin'">&#9881; Admin</button>
+      <button class="topbar-btn admin" onclick="window.open('/admin','_blank')">&#9881; Admin</button>
       {% endif %}
       <span class="topbar-user">{{ user.nickname }}</span>
       <button class="topbar-btn" onclick="location.href='/logout'">Salir</button>
@@ -530,7 +530,8 @@ function openDM(friend) {
   document.getElementById('msgs').innerHTML = '<div style="padding:1rem;color:var(--text2);font-size:.85rem;text-align:center">Cargando...</div>';
   loadTasks(curRoom);
   closeSb();
-  socket.emit('get_dm_history', { to_id: friend.id });
+  // join activates both P2P and history delivery for this DM room
+  socket.emit('join', { room: curRoom });
 }
 function switchGroup(gid, name, emoji) {
   leaveCurrentRoom();
@@ -709,24 +710,28 @@ function sendMsg() {
   const text = inp.value.trim();
   if (!text && !pendingFile) return;
   if (pendingFile) { uploadThenSend(text); return; }
-  const payload = { text, reply_to: replyTo };
+  const clientTime = new Date().toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'});
+  const payload = { text, reply_to: replyTo, time: clientTime };
   inp.value = ''; autoH(inp); cancelReply();
 
-  // P2P: solo para mensajes de sala (no DM ni grupos — van por Railway)
-  if (!isDM && !isGroup && p2p && p2p.room === curRoom) {
+  // P2P: salas y DMs (grupos van siempre por Railway)
+  if (!isGroup && p2p && p2p.room === curRoom) {
     const av = selectedAvatar || '';
-    const msgData = {
-      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      kind: 'chat', user_id: USER_ID, nickname: NICK,
-      time: new Date().toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'}),
-      avatar: av || undefined, text: text || undefined,
-      reply_to: replyTo || undefined
-    };
-    // Try P2P — if nobody else is connected, falls through to Railway
-    if (p2p.sendMessage(msgData)) return;
+    const kind = isDM ? 'dm' : 'chat';
+    // Para DMs, solo usar P2P si el otro está realmente conectado
+    const dmPeerConnected = isDM ? p2p.hasConnectedPeers() : true;
+    if (dmPeerConnected) {
+      const msgData = {
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+        kind, user_id: USER_ID, nickname: NICK, time: clientTime,
+        avatar: av || undefined, text: text || undefined,
+        reply_to: replyTo || undefined
+      };
+      if (p2p.sendMessage(msgData)) return;
+    }
   }
 
-  // Fallback: Railway (DMs, grupos, o si P2P no está listo)
+  // Railway fallback (grupos, DMs sin peer conectado, o sala sin peers P2P)
   if (isDM && dmTarget) socket.emit('send_dm', { to_id: dmTarget.id, ...payload });
   else if (isGroup && curGroupId) socket.emit('send_group_message', { group_id: curGroupId, ...payload });
   else socket.emit('send_message', { room: curRoom, ...payload });
@@ -754,7 +759,8 @@ function uploadThenSend(extraText) {
     prog.classList.remove('show'); bar.style.width='0%';
     if (xhr.status === 200) {
       const d = JSON.parse(xhr.responseText);
-      const payload = { text: extraText, file_url: d.url, file_name: d.name, is_image: d.is_image, reply_to: replyTo };
+      const clientTime = new Date().toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'});
+      const payload = { text: extraText, file_url: d.url, file_name: d.name, is_image: d.is_image, reply_to: replyTo, time: clientTime };
       if (isDM && dmTarget) socket.emit('send_dm', { to_id: dmTarget.id, ...payload });
       else if (isGroup && curGroupId) socket.emit('send_group_message', { group_id: curGroupId, ...payload });
       else socket.emit('send_message', { room: curRoom, ...payload });

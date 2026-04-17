@@ -166,6 +166,12 @@ def init_db():
         user_id    INTEGER NOT NULL,
         PRIMARY KEY (group_id, user_id)
     )""")
+    # Indexes — safe to run on every startup (IF NOT EXISTS)
+    dbq(db, "CREATE INDEX IF NOT EXISTS idx_friends_req  ON friendships(requester_id)")
+    dbq(db, "CREATE INDEX IF NOT EXISTS idx_friends_addr ON friendships(addressee_id)")
+    dbq(db, "CREATE INDEX IF NOT EXISTS idx_tasks_room   ON tasks(room_id)")
+    dbq(db, "CREATE INDEX IF NOT EXISTS idx_push_user    ON push_subs(user_id)")
+    db.commit()
     try:
         dbq(db, "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
         db.commit()
@@ -181,6 +187,19 @@ def init_db():
     db.commit(); db.close()
 
 init_db()
+
+# ── Periodic in-memory cleanup ────────────────────────────────────────────────
+def _cleanup_rooms():
+    """Remove empty entries from tracking dicts every hour to prevent RAM leak."""
+    for d in (room_users, room_sids):
+        for k in [k for k, v in d.items() if not v]:
+            d.pop(k, None)
+    active = set(room_sids)
+    for k in [k for k in list(room_host) if k not in active]:
+        room_host.pop(k, None)
+    threading.Timer(3600, _cleanup_rooms).start()
+
+threading.Timer(3600, _cleanup_rooms).start()
 
 _rooms_cache = None  # rooms rarely change — cache in memory
 def get_rooms(invalidate=False):
@@ -306,10 +325,11 @@ room_sids    = {}   # room → {sid: {uid, nickname, join_order}}
 room_host    = {}   # room → host_sid
 _join_counter = 0   # global counter for join order
 
-def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False, reply_to=None, avatar=""):
+def make_msg(kind, uid=None, nick="", text="", furl="", fname="", img=False, reply_to=None, avatar="", time=None):
     # Only include non-empty/non-default fields to minimize payload size (saves egress)
+    # time comes from the client so it always shows the user's local timezone
     m = {"id": str(uuid.uuid4()), "kind": kind, "user_id": uid,
-         "nickname": nick, "time": datetime.now().strftime("%H:%M")}
+         "nickname": nick, "time": time if time else datetime.now().strftime("%H:%M")}
     if text:      m["text"]      = text
     if furl:      m["file_url"]  = furl
     if fname:     m["file_name"] = fname
@@ -775,11 +795,14 @@ def on_connect():
     uid = current_user.id
     sid = request.sid
     join_room(f"user_{uid}")
+    # Only notify friends on the *first* session — avoids N×M emits on tab reload
+    was_offline = uid not in online_users or len(online_users[uid]) == 0
     online_users.setdefault(uid, set()).add(sid)
     sid_rooms[sid] = set()
-    for f in get_friends(uid):
-        socketio.emit("friend_online", {"id": uid, "nickname": current_user.nickname},
-                      room=f"user_{f['id']}")
+    if was_offline:
+        for f in get_friends(uid):
+            socketio.emit("friend_online", {"id": uid, "nickname": current_user.nickname},
+                          room=f"user_{f['id']}")
 
 @socketio.on("disconnect")
 def on_disconnect():
@@ -856,15 +879,16 @@ def on_leave(data):
 
 @socketio.on("send_message")
 def on_send_message(data):
-    room     = data.get("room","")
-    text     = (data.get("text") or "").strip()[:2000]
-    furl     = data.get("file_url","")
-    fname    = data.get("file_name","")
-    img      = bool(data.get("is_image", False))
-    reply_to = data.get("reply_to", None)
+    room        = data.get("room","")
+    text        = (data.get("text") or "").strip()[:2000]
+    furl        = data.get("file_url","")
+    fname       = data.get("file_name","")
+    img         = bool(data.get("is_image", False))
+    reply_to    = data.get("reply_to", None)
+    client_time = (data.get("time") or "")[:5]  # "HH:MM" from client's local clock
     if not room or (not text and not furl): return
     av  = current_user.avatar if hasattr(current_user, "avatar") else ""
-    msg = make_msg("chat", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
+    msg = make_msg("chat", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av, time=client_time or None)
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     emit("new_message", {"room": room, "message": msg}, room=room)
@@ -911,15 +935,16 @@ def on_react_message(data):
 
 @socketio.on("send_group_message")
 def on_send_group_message(data):
-    gid   = data.get("group_id")
-    text  = (data.get("text") or "").strip()[:2000]
-    furl  = data.get("file_url",""); fname = data.get("file_name","")
-    img   = bool(data.get("is_image", False))
-    reply_to = data.get("reply_to", None)
+    gid         = data.get("group_id")
+    text        = (data.get("text") or "").strip()[:2000]
+    furl        = data.get("file_url",""); fname = data.get("file_name","")
+    img         = bool(data.get("is_image", False))
+    reply_to    = data.get("reply_to", None)
+    client_time = (data.get("time") or "")[:5]
     if not gid or (not text and not furl): return
     room = f"group_{gid}"
     av   = current_user.avatar if hasattr(current_user, "avatar") else ""
-    msg  = make_msg("group", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
+    msg  = make_msg("group", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av, time=client_time or None)
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     emit("group_message", {"group_id": gid, "room": room, "message": msg}, room=room)
@@ -934,21 +959,24 @@ def on_join_group(data):
 
 @socketio.on("send_dm")
 def on_send_dm(data):
-    to_id = data.get("to_id")
-    text  = (data.get("text") or "").strip()[:2000]
-    furl  = data.get("file_url",""); fname = data.get("file_name","")
-    img   = bool(data.get("is_image", False))
-    reply_to = data.get("reply_to", None)
+    to_id       = data.get("to_id")
+    text        = (data.get("text") or "").strip()[:2000]
+    furl        = data.get("file_url",""); fname = data.get("file_name","")
+    img         = bool(data.get("is_image", False))
+    reply_to    = data.get("reply_to", None)
+    client_time = (data.get("time") or "")[:5]
     if not to_id or (not text and not furl): return
     room = dm_room(current_user.id, to_id)
     av   = current_user.avatar if hasattr(current_user, "avatar") else ""
-    msg  = make_msg("dm", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av)
+    msg  = make_msg("dm", current_user.id, current_user.nickname, text, furl, fname, img, reply_to=reply_to, avatar=av, time=client_time or None)
     room_msgs.setdefault(room, []).append(msg)
     if len(room_msgs[room]) > MSG_LIMIT: room_msgs[room] = room_msgs[room][-MSG_LIMIT:]
     join_room(room)
     emit("dm_message", {"room": room, "to_id": to_id, "message": msg}, room=room)
-    socketio.emit("dm_message", {"room": room, "to_id": to_id, "message": msg},
-                  room="user_{}".format(to_id))
+    # Only notify via user_X if recipient hasn't got the DM open (avoids duplicates)
+    if to_id not in room_users.get(room, set()):
+        socketio.emit("dm_message", {"room": room, "to_id": to_id, "message": msg},
+                      room="user_{}".format(to_id))
     body = (text or "Archivo adjunto")[:80]
     threading.Thread(target=send_push, args=(
         to_id, "Mensaje de {}".format(current_user.nickname), body, "/"
